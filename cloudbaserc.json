@@ -1,0 +1,15 @@
+{
+  "envId": "test-d3g2xaivpb160ef4f",
+  "framework": {
+    "name": "accounting-app",
+    "plugins": {
+      "client": {
+        "use": "@cloudbase/framework-plugin-website",
+        "inputs": {
+          "buildCommand": "npm run build",
+          "outputPath": "dist"
+        }
+      }
+    }
+  }
+}
