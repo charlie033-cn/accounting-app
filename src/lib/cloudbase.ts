@@ -12,6 +12,8 @@ export const cloudbaseApp = isCloudBaseConfigured
 export const cloudbaseAuth = cloudbaseApp?.auth()
 export const cloudbaseDb = cloudbaseApp?.database()
 
+export type CloudbaseDatabase = NonNullable<typeof cloudbaseDb>
+
 export const signInAnonymously = async () => {
   if (!cloudbaseAuth) {
     throw new Error('CloudBase 环境未配置')

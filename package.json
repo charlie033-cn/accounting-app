@@ -9,12 +9,14 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "check": "npm run lint && npm run build",
-    "deploy:tcb": "npm run build && npx -p @cloudbase/cli@latest tcb hosting deploy ./dist -e test-d3g2xaivpb160ef4f"
+    "deploy:tcb": "npm run build && npx -p @cloudbase/cli@latest tcb hosting deploy ./dist -e test-d3g2xaivpb160ef4f",
+    "deploy:fn-receipt": "npx -p @cloudbase/cli@latest tcb fn deploy parseReceiptTokenhub -e test-d3g2xaivpb160ef4f --yes"
   },
   "dependencies": {
     "@cloudbase/js-sdk": "^2.28.5",
     "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react-dom": "^19.2.6",
+    "react-router-dom": "^7.15.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

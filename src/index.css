@@ -7,6 +7,7 @@
   --border: #d9e0ea;
   --primary: #1677ff;
   --primary-dark: #0958d9;
+  --primary-soft: #eaf4ff;
   --success: #16a34a;
   --danger: #dc2626;
   --warning-bg: #fff7e6;
@@ -14,9 +15,43 @@
   --success-bg: #f0fdf4;
   --danger-bg: #fef2f2;
   --radius: 18px;
+  --radius-md: 12px;
+  --radius-sm: 10px;
+  --radius-pill: 999px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-body: 14px;
+  --text-ui: 15px;
+  --text-md: 16px;
+  --text-title-sm: 18px;
+  --text-title: 20px;
+  --text-hero: clamp(22px, 5.5vw, 28px);
+
+  --leading-tight: 1.2;
+  --leading-snug: 1.35;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+
+  --control-height: 48px;
+  --control-height-compact: 44px;
+
+  /* 与 App.css .tab-bar 实际高度大致一致（含安全区外由 max 处理） */
+  --tab-bar-height: 80px;
+
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
     'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
   color: var(--text);
   background: var(--bg);
   font-synthesis: none;
@@ -32,7 +67,14 @@
 body {
   min-width: 320px;
   min-height: 100vh;
+  min-height: 100dvh;
   margin: 0;
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
 }
 
 button,
@@ -60,11 +102,11 @@ p {
 
 code {
   display: inline-flex;
-  margin: 0 4px;
-  padding: 2px 6px;
-  border-radius: 6px;
+  margin: 0 var(--space-1);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
   background: var(--panel-subtle);
   color: var(--primary-dark);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.92em;
+  font-size: var(--text-sm);
 }

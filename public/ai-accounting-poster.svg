@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1600" viewBox="0 0 1080 1600">
+  <defs>
+    <linearGradient id="hero" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#eaf4ff"/><stop offset="0.55" stop-color="#f7fbff"/><stop offset="1" stop-color="#ffffff"/></linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1677ff"/><stop offset="1" stop-color="#6aa9ff"/></linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#0f3d75" flood-opacity="0.12"/></filter>
+  </defs>
+  <rect width="1080" height="1600" fill="url(#hero)"/>
+  <circle cx="928" cy="148" r="220" fill="#1677ff" opacity="0.08"/>
+  <circle cx="128" cy="1328" r="260" fill="#1677ff" opacity="0.055"/>
+  <g transform="translate(88 92)">
+    <rect x="0" y="0" width="904" height="472" rx="48" fill="#ffffff" opacity="0.86"/>
+    <rect x="0" y="0" width="904" height="472" rx="48" fill="none" stroke="#d8e8ff" stroke-width="2"/>
+    <text x="54" y="92" font-size="30" font-weight="700" fill="#1677ff" letter-spacing="4">AI ACCOUNTING</text>
+    <text x="54" y="178" font-size="76" font-weight="900" fill="#111827">AI 识图记账</text>
+    <text x="58" y="238" font-size="32" fill="#374151">拍照上传账单，自动生成支出记录</text>
+    <text x="58" y="294" font-size="26" fill="#667085">适合个人预算、日常消费、周期支出和小店流水管理</text>
+    <g transform="translate(54 344)">
+      <rect width="164" height="54" rx="27" fill="url(#blue)"/><text x="82" y="36" text-anchor="middle" font-size="24" font-weight="800" fill="#fff">快速记录</text>
+      <rect x="186" width="196" height="54" rx="27" fill="#edf5ff"/><text x="284" y="36" text-anchor="middle" font-size="24" font-weight="800" fill="#0958d9">预算清晰</text>
+      <rect x="404" width="220" height="54" rx="27" fill="#edf5ff"/><text x="514" y="36" text-anchor="middle" font-size="24" font-weight="800" fill="#0958d9">多笔识别</text>
+    </g>
+  </g>
+  <text x="96" y="646" font-size="40" font-weight="900" fill="#111827">核心亮点</text>
+  <text x="96" y="690" font-size="24" fill="#667085">从识别到保存，减少手动录入，让记账变得轻松。</text>
+  
+    <g filter="url(#softShadow)"><rect x="96" y="718" width="424" height="150" rx="28" fill="#ffffff"/></g>
+    <circle cx="140" cy="764" r="16" fill="#1677ff" opacity="0.16"/>
+    <circle cx="140" cy="764" r="7" fill="#1677ff"/>
+    <text x="174" y="770" font-size="30" font-weight="800" fill="#111827">AI 识图记账</text>
+    <text x="130" y="824" font-size="22" fill="#5b6472">拍照上传账单，自动识别金额、日期、分类</text>
+
+    <g filter="url(#softShadow)"><rect x="560" y="718" width="424" height="150" rx="28" fill="#ffffff"/></g>
+    <circle cx="604" cy="764" r="16" fill="#1677ff" opacity="0.16"/>
+    <circle cx="604" cy="764" r="7" fill="#1677ff"/>
+    <text x="638" y="770" font-size="30" font-weight="800" fill="#111827">多笔批量识别</text>
+    <text x="594" y="824" font-size="22" fill="#5b6472">账单列表一次导入，多条支出核对后保存</text>
+
+    <g filter="url(#softShadow)"><rect x="96" y="908" width="424" height="150" rx="28" fill="#ffffff"/></g>
+    <circle cx="140" cy="954" r="16" fill="#1677ff" opacity="0.16"/>
+    <circle cx="140" cy="954" r="7" fill="#1677ff"/>
+    <text x="174" y="960" font-size="30" font-weight="800" fill="#111827">预算进度清晰</text>
+    <text x="130" y="1014" font-size="22" fill="#5b6472">当日剩余预算、当月剩余预算一眼掌握</text>
+
+    <g filter="url(#softShadow)"><rect x="560" y="908" width="424" height="150" rx="28" fill="#ffffff"/></g>
+    <circle cx="604" cy="954" r="16" fill="#1677ff" opacity="0.16"/>
+    <circle cx="604" cy="954" r="7" fill="#1677ff"/>
+    <text x="638" y="960" font-size="30" font-weight="800" fill="#111827">周期支出管理</text>
+    <text x="594" y="1014" font-size="22" fill="#5b6472">房贷、分期等总金额自动拆成月账单</text>
+  <g filter="url(#softShadow)"><rect x="96" y="1130" width="888" height="330" rx="44" fill="#111827"/></g>
+  <text x="150" y="1212" font-size="42" font-weight="900" fill="#ffffff">扫码立即体验</text>
+  <text x="150" y="1260" font-size="24" fill="#cbd5e1">打开 Web App，开始你的 AI 记账流程</text>
+  <text x="150" y="1310" font-size="22" fill="#94a3b8">https://test-d3g2xaivpb160ef4f-1323111038.tcloudbaseapp.com</text>
+  <rect x="734" y="1188" width="188" height="188" rx="26" fill="#ffffff"/>
+  <image x="754" y="1208" width="148" height="148" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAWgAAAFoAQMAAABAK/OWAAAABlBMVEX///8AAABVwtN+AAAACXBIWXMAAA7EAAAOxAGVKw4bAAACVElEQVR4nO2aMZLDMAhFyaRImSP4KDmadbQcJUdImSITVvqAJO/Ozm6JPZ8mlv2c5gMWIBEa7T92VbeHnLT0W22lz7NOwJN0dvptmq6Pi2qpj2y56MefdYD0Duiq6rvSTet6Ibcq+NC6AavWd0nviIbyLnM3vZPeIS0tUiF694MW06T3RMOq8nYn/KCu6gWUN4D0wWjP1Wp03Um1/F2W1wkZoNIBkM5Of7Ma8/cms75Ma6x+NdKpaBMWOVqtwsG+qvkBInz4AensdAhalgqXSV571zPyZY5i0pnpFryKHOy166peuwJadaM86WPQZ3OIuthUui/vQN3gPi0DkE5PV7shf/tOCn9QWpR3z8CXmfQ+aHxv9ROVrg7lYQVe8SS9A9r6+q613V58j+x+IHP+Jp2a7r0G1Ds9I0v0IeaMTDoxHXHbrvE9nbtIVv1MypM+CI1qVtXyt9m1r7yrLIt7Den0NGR+OCjdRmd49DhI56aRsW1XHH6AmF7b7118AiCk09OqY7YqU71jz22jPDIy6eR0L2V6vVNsj+znlMrIyKSPQ6PnJDFxj7lr9A8tH2yyPenENGar0Npmddc+7el1r87ZnnReWjYTHestTqcjmkUPg3Rmepg/h/yeg88xUdcP6fz0dLbFfsH7OSX1mI5OI+nc9KhdT1HvvP1sC+it8qSPRKufL1Rc+B/4eQn3IRl7ZNJ7oKN/aEWPnRy1/XNbR8yT3gstcZpF/bWWv7c7atKJaZhF8dhJxfxGeneKdHpa3SKKffp2idMRz5/nTEkfgabR/rYvLmc+ChGcKmkAAAAASUVORK5CYII="/>
+  <text x="540" y="1536" text-anchor="middle" font-size="22" fill="#667085">AI 识图记账 · 预算管理 · 周期支出拆分</text>
+</svg>

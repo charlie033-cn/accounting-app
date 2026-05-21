@@ -1,5 +1,16 @@
 {
   "envId": "test-d3g2xaivpb160ef4f",
+  "functionRoot": "cloudfunctions",
+  "functions": [
+    {
+      "name": "parseReceiptTokenhub",
+      "timeout": 60,
+      "runtime": "Nodejs18.15",
+      "handler": "index.main",
+      "memorySize": 256,
+      "installDependency": false
+    }
+  ],
   "framework": {
     "name": "accounting-app",
     "plugins": {

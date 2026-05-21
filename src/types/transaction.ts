@@ -10,6 +10,10 @@ export type Transaction = {
   note: string | null
   created_at: string
   updated_at: string
+  /** 周期记账模板 id，手动记账通常为空 */
+  recurring_template_id?: string | null
+  /** manual | recurring */
+  source?: string | null
 }
 
 export type TransactionFormState = {
