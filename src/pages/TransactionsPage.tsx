@@ -1,12 +1,12 @@
 import { useMemo, useRef, useState, type PointerEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { Link } from 'react-router-dom'
 import { currentMonth, currentYear, todayISO } from '../accounting/constants'
 import { daysInCalendarMonth } from '../accounting/format'
 import { ConfirmActionSheet } from '../components/ConfirmActionSheet'
 import { useAccounting } from '../context/AccountingContext'
 import type { Transaction, TransactionFormState } from '../types/transaction'
 import { categoryEmoji } from '../utils/categoryEmoji'
-import { downloadTransactionsCsv } from '../utils/exportCsv'
 
 type TimeView = 'day' | 'month' | 'year'
 
@@ -143,14 +143,14 @@ export function TransactionsPage() {
             <p className="eyebrow">账单明细</p>
             <h2>{rangeLabel}</h2>
           </div>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => downloadTransactionsCsv(filteredTransactions)}
-            disabled={filteredTransactions.length === 0}
-          >
-            导出 CSV
-          </button>
+          <Link className="secondary-button transactions-report-link" to="/transactions/report">
+            <span className="transactions-report-icon" aria-hidden>
+              <i />
+              <i />
+              <i />
+            </span>
+            报表
+          </Link>
         </div>
 
         <div className="time-view-tabs segmented time-view-segmented">
