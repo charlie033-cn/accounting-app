@@ -9,6 +9,7 @@ import { LedgerPage } from './pages/LedgerPage'
 import { CategoryManagePage } from './pages/CategoryManagePage'
 import { MePage } from './pages/MePage'
 import { MorePage } from './pages/MorePage'
+import { MonthlyReportPage } from './pages/MonthlyReportPage'
 import { ReportPage } from './pages/ReportPage'
 import { TransactionsPage } from './pages/TransactionsPage'
 
@@ -64,6 +65,7 @@ function AppRoutes() {
         </Route>
         <Route path="me/budget" element={<BudgetPage />} />
         <Route path="me/categories" element={<CategoryManagePage />} />
+        <Route path="more/monthly-report" element={<MonthlyReportPage />} />
         <Route path="transactions/report" element={<ReportPage />} />
         <Route path="*" element={<Navigate to="/ledger" replace />} />
       </Routes>

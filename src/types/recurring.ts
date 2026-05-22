@@ -1,8 +1,11 @@
 export type RecurringTemplateStatus = 'active' | 'paused'
+export type RecurringBillingType = 'fixed' | 'installment'
 
 export type RecurringTemplate = {
   id: string
   user_id: string
+  /** fixed = 每期固定金额；installment = 总额分多期 */
+  billing_type?: RecurringBillingType
   name: string
   /** 每期入账金额；旧数据只有该字段 */
   amount: number

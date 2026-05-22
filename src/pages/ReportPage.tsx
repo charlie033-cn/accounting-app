@@ -1,11 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { currentMonth, currentYear, todayISO } from '../accounting/constants'
 import { useAccounting } from '../context/AccountingContext'
 import type { CSSProperties } from 'react'
 import type { Transaction } from '../types/transaction'
 import { categoryEmoji } from '../utils/categoryEmoji'
+import { buildSpendingReportSummary } from '../lib/spendingReport'
+import {
+  generateSpendingReportWithTokenhub,
+  type GeneratedSpendingReport,
+} from '../lib/generateSpendingReportTokenhub'
 
 type TimeView = 'day' | 'month' | 'year'
 
@@ -74,12 +79,16 @@ function dateMatchesPeriod(date: string, timeView: TimeView, day: string, month:
 
 export function ReportPage() {
   const { transactions, formatMoney } = useAccounting()
+  const [searchParams] = useSearchParams()
   const [timeView, setTimeView] = useState<TimeView>('month')
   const [filterDay, setFilterDay] = useState(todayISO)
   const [filterMonth, setFilterMonth] = useState(currentMonth)
   const [filterYear, setFilterYear] = useState(currentYear)
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [detailCategory, setDetailCategory] = useState<string | null>(null)
+  const [generatedReports, setGeneratedReports] = useState<Record<string, GeneratedSpendingReport>>({})
+  const [reportFallbackKeys, setReportFallbackKeys] = useState<Record<string, boolean>>({})
+  const [reportLoadingKey, setReportLoadingKey] = useState('')
 
   const periodLabel =
     timeView === 'day'
@@ -118,6 +127,62 @@ export function ReportPage() {
       }))
       .sort((a, b) => b.amount - a.amount)
   }, [transactions, timeView, filterDay, filterMonth, filterYear])
+
+  const periodRows = useMemo(
+    () =>
+      transactions.filter((item) =>
+        dateMatchesPeriod(item.transaction_date, timeView, filterDay, filterMonth, filterYear),
+      ),
+    [transactions, timeView, filterDay, filterMonth, filterYear],
+  )
+
+  const spendingSummary = useMemo(
+    () => buildSpendingReportSummary(periodRows, periodLabel),
+    [periodRows, periodLabel],
+  )
+  const reportKey = `${timeView}:${filterDay}:${filterMonth}:${filterYear}`
+  const generatedReport = generatedReports[reportKey] ?? null
+  const reportFallback = Boolean(reportFallbackKeys[reportKey])
+  const autoReportRequested = searchParams.get('aiReport') === '1'
+  const reportHighlights = generatedReport?.highlights.length
+    ? generatedReport.highlights
+    : spendingSummary.localHighlights
+  const reportSuggestion = generatedReport?.suggestions[0] ?? spendingSummary.localSuggestions[0]
+
+  const handleGenerateReport = useCallback(async () => {
+    if (spendingSummary.totalExpense <= 0 || reportLoadingKey) {
+      return
+    }
+    setReportLoadingKey(reportKey)
+    try {
+      const report = await generateSpendingReportWithTokenhub(spendingSummary)
+      if (report) {
+        setGeneratedReports((prev) => ({ ...prev, [reportKey]: report }))
+        setReportFallbackKeys((prev) => ({ ...prev, [reportKey]: false }))
+      } else {
+        setReportFallbackKeys((prev) => ({ ...prev, [reportKey]: true }))
+      }
+    } finally {
+      setReportLoadingKey('')
+    }
+  }, [reportKey, reportLoadingKey, spendingSummary])
+
+  useEffect(() => {
+    if (!autoReportRequested || generatedReport || reportFallback || reportLoadingKey) {
+      return
+    }
+    if (spendingSummary.totalExpense <= 0) {
+      return
+    }
+    void handleGenerateReport()
+  }, [
+    autoReportRequested,
+    generatedReport,
+    handleGenerateReport,
+    reportFallback,
+    reportLoadingKey,
+    spendingSummary.totalExpense,
+  ])
 
   const totalExpense = useMemo(
     () => categoryStats.reduce((sum, item) => sum + item.amount, 0),
@@ -257,6 +322,37 @@ export function ReportPage() {
               </label>
             )}
           </div>
+
+          {(generatedReport || reportFallback || reportLoadingKey === reportKey) && (
+            <section className="report-insight-card" aria-label={`${periodLabel} 消费报告`}>
+              <div className="report-insight-head">
+                <div>
+                  <p className="eyebrow">AI 消费报告</p>
+                  <h3>{reportLoadingKey === reportKey ? '正在生成报告' : '智能复盘本期消费'}</h3>
+                </div>
+              </div>
+              {reportLoadingKey === reportKey ? (
+                <p className="muted report-insight-empty">正在结合 AI 能力分析当前周期账单…</p>
+              ) : (
+                <>
+                  {reportFallback && !generatedReport && (
+                    <p className="report-insight-summary">
+                      暂时无法生成完整 AI 报告，已先基于本地统计展示消费概览。
+                    </p>
+                  )}
+                  {generatedReport?.summary && (
+                    <p className="report-insight-summary">{generatedReport.summary}</p>
+                  )}
+                  <ul className="report-insight-list">
+                    {reportHighlights.slice(0, 4).map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                  {reportSuggestion && <div className="report-insight-suggestion">{reportSuggestion}</div>}
+                </>
+              )}
+            </section>
+          )}
 
           <section className="report-chart-card" aria-label={`${periodLabel} 分类支出占比`}>
             <div className="report-pie-wrap">

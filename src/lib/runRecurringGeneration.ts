@@ -13,6 +13,7 @@ type CloudRecurring = Omit<RecurringTemplate, 'id'> & { _id: string }
 const toTemplate = (row: CloudRecurring): RecurringTemplate => ({
   id: row._id,
   user_id: row.user_id,
+  billing_type: row.billing_type,
   name: row.name,
   amount: Number(row.amount),
   total_amount: row.total_amount == null ? null : Number(row.total_amount),

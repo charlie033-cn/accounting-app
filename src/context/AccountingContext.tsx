@@ -25,7 +25,7 @@ import {
 import { daysInCalendarMonth, formatMoney } from '../accounting/format'
 import type { CloudBudgetDoc } from '../types/budget'
 import type { CloudUserCategoryListDoc } from '../types/categories'
-import type { RecurringTemplate } from '../types/recurring'
+import type { RecurringBillingType, RecurringTemplate } from '../types/recurring'
 import type {
   Transaction,
   TransactionFormState,
@@ -132,6 +132,7 @@ const toTransaction = (item: CloudTransaction): Transaction => ({
 const toRecurringTemplate = (row: CloudRecurringRow): RecurringTemplate => ({
   id: row._id,
   user_id: row.user_id,
+  billing_type: row.billing_type,
   name: row.name,
   amount: Number(row.amount),
   total_amount: row.total_amount == null ? null : Number(row.total_amount),
@@ -238,8 +239,10 @@ export type AccountingContextType = {
   recurringLoading: boolean
   loadRecurringTemplates: (userId: string) => Promise<void>
   createRecurringTemplate: (input: {
+    billing_type: RecurringBillingType
     name: string
     amount: number
+    total_amount?: number | null
     category: string
     day_of_month: number
     start_period: string
@@ -1077,8 +1080,10 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
 
   const createRecurringTemplate = useCallback(
     async (input: {
+      billing_type: RecurringBillingType
       name: string
       amount: number
+      total_amount?: number | null
       category: string
       day_of_month: number
       start_period: string
@@ -1090,18 +1095,22 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
         throw new Error('未登录')
       }
       const now = new Date().toISOString()
-      const firstInstallmentAmount = splitRecurringAmount(input.amount, input.duration_months, 0)
+      const months = Math.max(1, Math.floor(input.duration_months))
+      const isInstallment = input.billing_type === 'installment'
+      const totalAmount = isInstallment ? Number(input.total_amount ?? input.amount) : null
+      const firstAmount = isInstallment ? splitRecurringAmount(totalAmount ?? 0, months, 0) : input.amount
       try {
         const addRes = (await db.collection(RECURRING_COLLECTION).add({
           user_id: session.userId,
+          billing_type: input.billing_type,
           name: input.name.trim(),
-          amount: firstInstallmentAmount,
-          total_amount: input.amount,
+          amount: firstAmount,
+          total_amount: totalAmount,
           category: input.category,
           day_of_month: input.day_of_month,
           start_period: input.start_period,
           start_date: input.start_date ?? null,
-          duration_months: input.duration_months,
+          duration_months: months,
           status: 'active',
           created_at: now,
           updated_at: now,
@@ -1113,17 +1122,16 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
 
         const templateId = addRes.id
         if (templateId) {
-          const months = Math.max(1, Math.floor(input.duration_months))
           for (let index = 0; index < months; index += 1) {
             const period = periodAfterMonths(input.start_period, index)
             const transactionDate = effectiveBillingDateISO(period, input.day_of_month)
             await db.collection(TRANSACTION_COLLECTION).add({
               user_id: session.userId,
               type: 'expense',
-              amount: splitRecurringAmount(input.amount, months, index),
+              amount: isInstallment ? splitRecurringAmount(totalAmount ?? 0, months, index) : input.amount,
               category: input.category,
               transaction_date: transactionDate,
-              note: `周期记账 · ${input.name.trim()}`,
+              note: `${isInstallment ? '分期自动记账' : '固定周期记账'} · ${input.name.trim()} · 第 ${index + 1}/${months} 期`,
               source: 'recurring',
               recurring_template_id: templateId,
               created_at: now,

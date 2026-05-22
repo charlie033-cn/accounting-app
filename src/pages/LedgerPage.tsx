@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { currentMonth, todayISO } from '../accounting/constants'
+import { inferBuiltInCategory } from '../accounting/categoryRules'
 import { ConfirmActionSheet } from '../components/ConfirmActionSheet'
 import { daysInCalendarMonth } from '../accounting/format'
 import { useAccounting } from '../context/AccountingContext'
@@ -32,7 +33,7 @@ function pickCategory(raw: string, options: string[]): string {
   if (fuzzy) {
     return fuzzy
   }
-  return options.includes('其他') ? '其他' : (options[0] ?? t)
+  return inferBuiltInCategory(t, 'expense', options) || (options[0] ?? t)
 }
 
 type ReceiptReviewItem = ReceiptParseDraft & {
@@ -165,26 +166,7 @@ function parseVoiceDate(text: string) {
 }
 
 function parseVoiceCategory(text: string, options: string[]) {
-  const keywordMap: Array<[string, string[]]> = [
-    ['餐饮', ['饭', '餐', '午饭', '晚饭', '早餐', '吃', '咖啡', '奶茶', '外卖', '水果']],
-    ['交通', ['打车', '出租', '地铁', '公交', '高铁', '火车', '机票', '停车', '加油']],
-    ['购物', ['买', '购物', '超市', '衣服', '鞋', '日用品']],
-    ['房租', ['房租', '租房', '租金']],
-    ['水电', ['水费', '电费', '燃气', '网费', '物业']],
-    ['娱乐', ['电影', '游戏', '娱乐', '唱歌', '演出']],
-    ['医疗', ['医院', '药', '看病', '体检', '医疗']],
-  ]
-  const exact = options.find((option) => text.includes(option))
-  if (exact) {
-    return exact
-  }
-  const matched = keywordMap.find(([category, keywords]) =>
-    options.includes(category) && keywords.some((keyword) => text.includes(keyword)),
-  )
-  if (matched) {
-    return matched[0]
-  }
-  return options.includes('其他') ? '其他' : (options[0] ?? '')
+  return inferBuiltInCategory(text, 'expense', options)
 }
 
 function cleanVoiceNote(text: string) {
@@ -222,6 +204,7 @@ export function LedgerPage() {
   } = useAccounting()
 
   const receiptFileRef = useRef<HTMLInputElement>(null)
+  const receiptParseRunRef = useRef(0)
   const voiceRecognitionRef = useRef<BrowserSpeechRecognition | null>(null)
   const voiceTranscriptRef = useRef('')
   const voiceShouldApplyRef = useRef(false)
@@ -309,6 +292,13 @@ export function LedgerPage() {
   const openReceiptPicker = () => {
     setReceiptError('')
     receiptFileRef.current?.click()
+  }
+
+  const cancelReceiptParsing = () => {
+    receiptParseRunRef.current += 1
+    setReceiptParsing(false)
+    setReceiptError('')
+    setMessage('已取消识图记账')
   }
 
   const applyVoiceText = (text: string) => {
@@ -478,18 +468,26 @@ export function LedgerPage() {
       return
     }
 
+    const runId = receiptParseRunRef.current + 1
+    receiptParseRunRef.current = runId
     setReceiptParsing(true)
     setReceiptError('')
     setReceiptDrafts([])
     try {
       const dataUrl = await readFileAsDataUrl(file)
+      if (receiptParseRunRef.current !== runId) {
+        return
+      }
       const drafts = await parseReceiptFromImageDataUrl(dataUrl)
+      if (receiptParseRunRef.current !== runId) {
+        return
+      }
       const normalized = drafts.map((draft, index) => ({
         ...draft,
         id: `${Date.now()}-${index}`,
         selected: true,
         type: 'expense' as const,
-        category: pickCategory(draft.category, categoryOptions('expense')),
+        category: inferBuiltInCategory(`${draft.category} ${draft.note}`, 'expense', categoryOptions('expense')) || pickCategory(draft.category, categoryOptions('expense')),
       }))
 
       if (normalized.length === 1) {
@@ -508,9 +506,14 @@ export function LedgerPage() {
       }
       setError('')
     } catch (err) {
+      if (receiptParseRunRef.current !== runId) {
+        return
+      }
       setReceiptError(err instanceof Error ? err.message : '识别失败')
     } finally {
-      setReceiptParsing(false)
+      if (receiptParseRunRef.current === runId) {
+        setReceiptParsing(false)
+      }
     }
   }
 
@@ -677,7 +680,7 @@ export function LedgerPage() {
                 alt=""
                 aria-hidden
               />
-              {receiptParsing ? '识别中…' : '识图记账'}
+              识图记账
             </button>
           </div>
         </div>
@@ -864,6 +867,30 @@ export function LedgerPage() {
                 disabled={isLoading || selectedReceiptDraftCount === 0}
               >
                 {isLoading ? '保存中...' : `保存选中的 ${selectedReceiptDraftCount} 笔`}
+              </button>
+            </div>
+          </section>
+        </div>,
+        document.body,
+      )}
+
+      {receiptParsing && createPortal(
+        <div className="ledger-receipt-sheet-layer" role="presentation">
+          <div className="ledger-receipt-sheet-backdrop" aria-hidden />
+          <section
+            className="ledger-receipt-sheet ledger-receipt-parsing-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ledger-receipt-parsing-title"
+          >
+            <div className="ledger-receipt-parsing">
+              <span className="ledger-receipt-parsing-spinner" aria-hidden />
+              <h3 id="ledger-receipt-parsing-title">正在识别图片</h3>
+              <p className="muted small">识别完成后请核对信息</p>
+            </div>
+            <div className="ledger-receipt-sheet-actions ledger-receipt-parsing-actions">
+              <button type="button" className="secondary-button" onClick={cancelReceiptParsing}>
+                取消识别
               </button>
             </div>
           </section>

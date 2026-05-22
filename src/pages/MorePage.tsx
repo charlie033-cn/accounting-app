@@ -1,13 +1,23 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { Link } from 'react-router-dom'
 import { todayISO } from '../accounting/constants'
 import { useAccounting } from '../context/AccountingContext'
+import { splitRecurringAmount } from '../lib/recurringSchedule'
+import type { RecurringBillingType, RecurringTemplate } from '../types/recurring'
 
 function recurringStartDate(template: { start_date?: string | null; start_period: string; day_of_month: number }): string {
   if (template.start_date && /^\d{4}-\d{2}-\d{2}$/.test(template.start_date)) {
     return template.start_date
   }
   return `${template.start_period}-${String(template.day_of_month).padStart(2, '0')}`
+}
+
+function recurringBillingType(template: RecurringTemplate): RecurringBillingType {
+  if (template.billing_type === 'fixed' || template.billing_type === 'installment') {
+    return template.billing_type
+  }
+  return Number(template.total_amount) > 0 ? 'installment' : 'fixed'
 }
 
 function recurringTotalAmount(template: { amount: number; total_amount?: number | null; duration_months: number }): number {
@@ -40,6 +50,7 @@ export function MorePage() {
 
   const [rName, setRName] = useState('')
   const [rAmount, setRAmount] = useState('')
+  const [rBillingType, setRBillingType] = useState<RecurringBillingType>('fixed')
   const [rStartDate, setRStartDate] = useState(todayISO())
   const [rMonths, setRMonths] = useState(12)
   const [rSaving, setRSaving] = useState(false)
@@ -61,7 +72,7 @@ export function MorePage() {
       return
     }
     if (!Number.isFinite(amount) || amount <= 0) {
-      setRErr('请输入大于 0 的总金额')
+      setRErr(rBillingType === 'installment' ? '请输入大于 0 的总金额' : '请输入大于 0 的每期金额')
       return
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(rStartDate)) {
@@ -76,8 +87,10 @@ export function MorePage() {
     const [, , day] = rStartDate.split('-').map(Number)
     try {
       await createRecurringTemplate({
+        billing_type: rBillingType,
         name: rName.trim(),
-        amount,
+        amount: rBillingType === 'installment' ? splitRecurringAmount(amount, Math.floor(rMonths), 0) : amount,
+        total_amount: rBillingType === 'installment' ? amount : null,
         category: rCategory,
         day_of_month: day,
         start_period: rStartDate.slice(0, 7),
@@ -88,6 +101,7 @@ export function MorePage() {
       setRAmount('')
       setRStartDate(todayISO())
       setRMonths(12)
+      setRBillingType('fixed')
     } catch (err) {
       setRErr(err instanceof Error ? err.message : '保存失败')
     } finally {
@@ -97,16 +111,51 @@ export function MorePage() {
 
   return (
     <div className="tab-page">
+      <section className="panel more-report-panel">
+        <Link className="more-report-card" to="/more/monthly-report">
+          <div className="more-report-card-content">
+            <p className="eyebrow">查理轻松记</p>
+            <h2>我的AI消费报告</h2>
+            <span className="more-report-card-button">查看月度报告</span>
+          </div>
+          <img className="more-report-card-ip" src="/自动抠图人物%203.png" alt="AI 消费报告助手" />
+        </Link>
+      </section>
+
       <section className="panel recurring-panel">
         <div className="panel-header">
           <div>
-            <p className="eyebrow">周期记账</p>
-            <h2>房贷 / 车贷 / 分期</h2>
+            <p className="eyebrow">更多功能</p>
+            <h2>周期记账</h2>
           </div>
         </div>
         <form className="form-grid recurring-form" onSubmit={handleRecurringSubmit}>
+          <div className="recurring-type-picker" role="radiogroup" aria-label="周期账单类型">
+            <button
+              type="button"
+              className={rBillingType === 'fixed' ? 'active' : ''}
+              role="radio"
+              aria-checked={rBillingType === 'fixed'}
+              onClick={() => setRBillingType('fixed')}
+            >
+              <strong>固定周期</strong>
+              <span>每期固定金额，如房租、会员</span>
+            </button>
+            <button
+              type="button"
+              className={rBillingType === 'installment' ? 'active' : ''}
+              role="radio"
+              aria-checked={rBillingType === 'installment'}
+              onClick={() => setRBillingType('installment')}
+            >
+              <strong>总额分期</strong>
+              <span>总消费分多期，如手机、课程</span>
+            </button>
+          </div>
           <label className="ledger-amount-field">
-            <span className="sr-only">金额</span>
+            <span className="recurring-amount-label">
+              {rBillingType === 'installment' ? '总金额' : '每期金额'}
+            </span>
             <span className="money-input-wrap">
               <span className="money-input-prefix" aria-hidden>
                 ¥
@@ -126,7 +175,12 @@ export function MorePage() {
           <div className="form-row-2 recurring-name-category-row">
             <label>
               名称
-              <input value={rName} onChange={(e) => setRName(e.target.value)} placeholder="例如：房贷" required />
+              <input
+                value={rName}
+                onChange={(e) => setRName(e.target.value)}
+                placeholder={rBillingType === 'installment' ? '例如：iPhone 分期' : '例如：房租'}
+                required
+              />
             </label>
             <label>
               分类
@@ -145,7 +199,7 @@ export function MorePage() {
               <input type="date" value={rStartDate} onChange={(e) => setRStartDate(e.target.value)} required />
             </label>
             <label>
-              记账周期（月）
+              {rBillingType === 'installment' ? '分期期数（月）' : '持续周期（月）'}
               <input
                 type="number"
                 inputMode="numeric"
@@ -155,6 +209,25 @@ export function MorePage() {
                 onChange={(e) => setRMonths(Number(e.target.value))}
               />
             </label>
+          </div>
+          <div className="recurring-preview">
+            {rBillingType === 'installment' ? (
+              <>
+                <strong>系统会按总金额拆分：</strong>
+                <span>
+                  {rStartDate || '开始日期'} 起，共 {Math.max(1, Math.floor(rMonths || 1))} 期，
+                  每期约 {formatMoney(splitRecurringAmount(Number(rAmount) || 0, Math.max(1, Math.floor(rMonths || 1)), 0))}
+                </span>
+              </>
+            ) : (
+              <>
+                <strong>系统会按固定金额记录：</strong>
+                <span>
+                  {rStartDate || '开始日期'} 起，每月 {rStartDate.split('-')[2] || '--'} 号记录{' '}
+                  {formatMoney(Number(rAmount) || 0)}，共 {Math.max(1, Math.floor(rMonths || 1))} 期
+                </span>
+              </>
+            )}
           </div>
           {rErr && <p className="alert error">{rErr}</p>}
           <button className="primary-button" type="submit" disabled={rSaving || recurringLoading}>
@@ -166,7 +239,7 @@ export function MorePage() {
               className="secondary-button recurring-view-all-btn"
               onClick={() => setShowRecurringSheet(true)}
             >
-              查看全部周期账单
+              查看周期账单列表
             </button>
           )}
         </form>
@@ -193,7 +266,7 @@ export function MorePage() {
             aria-labelledby="recurring-sheet-title"
           >
             <div className="ledger-receipt-review-head">
-              <h3 id="recurring-sheet-title">全部周期账单</h3>
+              <h3 id="recurring-sheet-title">周期账单列表</h3>
               <button
                 type="button"
                 className="ledger-receipt-sheet-close"
@@ -206,32 +279,44 @@ export function MorePage() {
 
             <div className="ledger-receipt-review-list">
               <ul className="recurring-list recurring-list--sheet">
-                {recurringTemplates.map((t) => (
-                  <li key={t.id} className="recurring-item">
-                    <div>
-                      <strong>{t.name}</strong>
-                      <span className="muted">
-                        {' '}
-                        · 每月 {t.day_of_month} 号对齐 · 总额 {formatMoney(recurringTotalAmount(t))} · {t.category}
-                      </span>
-                      <p className="muted small">
-                        {recurringStartDate(t)} 起 · 共 {t.duration_months} 期 · 每期约 {formatMoney(t.amount)} · {t.status === 'active' ? '启用' : '暂停'}
-                      </p>
-                    </div>
-                    <div className="recurring-actions">
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={() => void setRecurringPaused(t.id, t.status === 'active')}
-                      >
-                        {t.status === 'active' ? '暂停' : '启用'}
-                      </button>
-                      <button type="button" className="text-button danger" onClick={() => void deleteRecurringTemplate(t.id)}>
-                        删除
-                      </button>
-                    </div>
-                  </li>
-                ))}
+                {recurringTemplates.map((t) => {
+                  const type = recurringBillingType(t)
+                  return (
+                    <li key={t.id} className="recurring-item">
+                      <div className="recurring-item-content">
+                        <div className="recurring-item-title">
+                          <strong>{t.name}</strong>
+                          <span className={`recurring-type-badge recurring-type-badge--${type}`}>
+                            {type === 'installment' ? '总额分期' : '固定周期'}
+                          </span>
+                          <span className={`recurring-status-badge recurring-status-badge--${t.status}`}>
+                            {t.status === 'active' ? '启用' : '暂停'}
+                          </span>
+                        </div>
+                        <p className="recurring-item-main">
+                          {type === 'installment'
+                            ? `${formatMoney(recurringTotalAmount(t))} · ${t.duration_months} 期 · 每期约 ${formatMoney(t.amount)}`
+                            : `${formatMoney(t.amount)} / 期 · 共 ${t.duration_months} 期`}
+                        </p>
+                        <p className="muted small recurring-item-meta">
+                          每月 {t.day_of_month} 号 · {recurringStartDate(t)} 起 · {t.category}
+                        </p>
+                      </div>
+                      <div className="recurring-actions">
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => void setRecurringPaused(t.id, t.status === 'active')}
+                        >
+                          {t.status === 'active' ? '暂停' : '启用'}
+                        </button>
+                        <button type="button" className="text-button danger" onClick={() => void deleteRecurringTemplate(t.id)}>
+                          删除
+                        </button>
+                      </div>
+                    </li>
+                  )
+                })}
               </ul>
             </div>
           </section>
