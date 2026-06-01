@@ -3,7 +3,7 @@ import type { Transaction } from '../types/transaction'
 import { cloudbaseDb } from './cloudbase'
 import type { GeneratedSpendingReport } from './generateSpendingReportTokenhub'
 
-export const MONTHLY_REPORT_VERSION = '2026-05-ai-report-v2'
+export const MONTHLY_REPORT_VERSION = '2026-05-charlie-expense-report-v4'
 
 type MonthlyReportCacheDoc = {
   _id: string
@@ -32,6 +32,7 @@ export function buildMonthlyReportFingerprint(rows: Transaction[]) {
       type: row.type,
       amount: Number(row.amount || 0),
       category: row.category,
+      subcategory: row.subcategory ?? '',
       date: row.transaction_date,
       note: row.note ?? '',
       created_at: row.created_at,

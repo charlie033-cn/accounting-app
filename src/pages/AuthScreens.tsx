@@ -16,6 +16,8 @@ export function AuthScreens() {
     setEmail,
     password,
     setPassword,
+    rememberPassword,
+    setRememberPassword,
     error,
     isLoading,
   } = useAccounting()
@@ -23,6 +25,9 @@ export function AuthScreens() {
   if (isVerifyingSignup) {
     return (
       <main className="app-shell auth-shell">
+        <div className="auth-background-mascot" aria-hidden>
+          <img src="/jizhangip.png" alt="" />
+        </div>
         <section className="auth-card">
           <div>
             <p className="eyebrow">邮箱验证</p>
@@ -63,11 +68,13 @@ export function AuthScreens() {
 
   return (
     <main className="app-shell auth-shell">
+      <div className="auth-background-mascot" aria-hidden>
+        <img src="/jizhangip.png" alt="" />
+      </div>
       <section className="auth-card">
         <div>
-          <p className="eyebrow">云记账</p>
-          <h1>把每天的收支记清楚</h1>
-          <p className="muted">注册或登录后，账单会按账号保存到腾讯云，同一个账号在手机和电脑会自动同步。</p>
+          <p className="eyebrow">查理小猪轻松记</p>
+          <h1 className="auth-tech-title">AI记账更轻松</h1>
         </div>
 
         <form className="form-grid" onSubmit={onSubmit}>
@@ -92,6 +99,16 @@ export function AuthScreens() {
               required
             />
           </label>
+          {authMode === 'sign-in' && (
+            <label className="auth-remember-row">
+              <input
+                type="checkbox"
+                checked={rememberPassword}
+                onChange={(event) => setRememberPassword(event.target.checked)}
+              />
+              <span>记住密码</span>
+            </label>
+          )}
 
           {error && <p className="alert error">{error}</p>}
 

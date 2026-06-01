@@ -14,6 +14,10 @@ function countCategoryUsage(
   return fromTx + fromRecurring
 }
 
+function countSubcategoryUsage(name: string, transactions: Transaction[]): number {
+  return transactions.filter((t) => t.subcategory === name && t.type === 'expense').length
+}
+
 function validateExpenseList(expense: string[]): string | null {
   const trimmed = expense.map((s) => s.trim()).filter(Boolean)
   if (trimmed.length === 0) {
@@ -38,6 +42,7 @@ export function CategoryManagePage({ embedded = false, onClose }: CategoryManage
   const navigate = useNavigate()
   const {
     expenseCategoryNames,
+    expenseSubcategoryMap,
     incomeCategoryNames,
     transactions,
     recurringTemplates,
@@ -48,6 +53,9 @@ export function CategoryManagePage({ embedded = false, onClose }: CategoryManage
 
   const [draftExpense, setDraftExpense] = useState<string[]>([])
   const [newName, setNewName] = useState('')
+  const [draftSubcategories, setDraftSubcategories] = useState<Record<string, string[]>>({})
+  const [activeCategoryIndex, setActiveCategoryIndex] = useState(0)
+  const [newSubcategoryName, setNewSubcategoryName] = useState('')
   const [error, setError] = useState('')
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
   const [isAdding, setIsAdding] = useState(false)
@@ -62,30 +70,48 @@ export function CategoryManagePage({ embedded = false, onClose }: CategoryManage
   )
 
   const hasUnsavedChanges = useMemo(() => {
-    if (editingIndex != null || isAdding || newName.trim()) {
+    if (editingIndex != null || isAdding || newName.trim() || newSubcategoryName.trim()) {
       return true
     }
     if (normalizedDraftExpense.length !== expenseCategoryNames.length) {
       return true
     }
-    return normalizedDraftExpense.some((name, index) => name !== expenseCategoryNames[index])
-  }, [editingIndex, expenseCategoryNames, isAdding, newName, normalizedDraftExpense])
+    if (normalizedDraftExpense.some((name, index) => name !== expenseCategoryNames[index])) {
+      return true
+    }
+    return JSON.stringify(draftSubcategories) !== JSON.stringify(expenseSubcategoryMap)
+  }, [draftSubcategories, editingIndex, expenseCategoryNames, expenseSubcategoryMap, isAdding, newName, newSubcategoryName, normalizedDraftExpense])
 
   useEffect(() => {
     setDraftExpense([...expenseCategoryNames])
+    setDraftSubcategories({ ...expenseSubcategoryMap })
+    setActiveCategoryIndex(0)
     setNewName('')
+    setNewSubcategoryName('')
     setError('')
     setEditingIndex(null)
     setIsAdding(false)
     setSwipedIndex(null)
     setDraggingIndex(null)
     draggingIndexRef.current = null
-  }, [expenseCategoryNames])
+  }, [expenseCategoryNames, expenseSubcategoryMap])
+
+  const activeCategory = normalizedDraftExpense[activeCategoryIndex] ?? normalizedDraftExpense[0] ?? ''
+  const activeSubcategories = activeCategory ? (draftSubcategories[activeCategory] ?? []) : []
 
   const updateAt = useCallback((index: number, value: string) => {
     setDraftExpense((prev) => {
       const next = [...prev]
+      const oldName = next[index]
       next[index] = value
+      setDraftSubcategories((current) => {
+        if (!oldName || oldName === value) {
+          return current
+        }
+        const nextMap = { ...current, [value]: current[oldName] ?? [] }
+        delete nextMap[oldName]
+        return nextMap
+      })
       return next
     })
   }, [])
@@ -106,8 +132,14 @@ export function CategoryManagePage({ embedded = false, onClose }: CategoryManage
             return prev
           }
         }
+        setDraftSubcategories((current) => {
+          const next = { ...current }
+          delete next[name]
+          return next
+        })
         return prev.filter((_, i) => i !== index)
       })
+      setActiveCategoryIndex((current) => Math.max(0, Math.min(current, draftExpense.length - 2)))
       setEditingIndex((current) => {
         if (current == null) {
           return current
@@ -133,6 +165,8 @@ export function CategoryManagePage({ embedded = false, onClose }: CategoryManage
       return
     }
     setDraftExpense((prev) => [t, ...prev])
+    setDraftSubcategories((prev) => ({ ...prev, [t]: ['无法归类'] }))
+    setActiveCategoryIndex(0)
     setError('')
     setNewName('')
     setIsAdding(false)
@@ -265,14 +299,65 @@ export function CategoryManagePage({ embedded = false, onClose }: CategoryManage
       setError(err)
       return
     }
+    for (const category of expense) {
+      const names = (draftSubcategories[category] ?? []).map((s) => s.trim()).filter(Boolean)
+      if (names.length === 0) {
+        setError(`「${category}」至少保留 1 个二级分类`)
+        return
+      }
+      if (new Set(names).size !== names.length) {
+        setError(`「${category}」下存在重复二级分类`)
+        return
+      }
+    }
     setError('')
     try {
-      await saveUserCategoryLists({ expense, income })
+      await saveUserCategoryLists({ expense, income, expenseSubcategories: draftSubcategories })
       exitPage()
     } catch (e) {
       setError(e instanceof Error ? e.message : '保存失败')
     }
   }
+
+  const addSubcategory = useCallback(() => {
+    const name = newSubcategoryName.trim()
+    if (!activeCategory || !name) {
+      setError('请输入二级分类名称')
+      return
+    }
+    if (activeSubcategories.includes(name)) {
+      setError('已存在同名二级分类')
+      return
+    }
+    setDraftSubcategories((current) => ({
+      ...current,
+      [activeCategory]: [...activeSubcategories, name],
+    }))
+    setNewSubcategoryName('')
+    setError('')
+  }, [activeCategory, activeSubcategories, newSubcategoryName])
+
+  const updateSubcategory = useCallback((index: number, value: string) => {
+    if (!activeCategory) return
+    setDraftSubcategories((current) => {
+      const next = [...(current[activeCategory] ?? [])]
+      next[index] = value
+      return { ...current, [activeCategory]: next }
+    })
+  }, [activeCategory])
+
+  const removeSubcategory = useCallback((index: number) => {
+    if (!activeCategory || activeSubcategories.length <= 1) return
+    const name = activeSubcategories[index]
+    const usage = countSubcategoryUsage(name, transactions)
+    if (usage > 0 && !window.confirm(`「${name}」在 ${usage} 条账单中使用过。删除后历史账单仍会保留该名称，确定删除？`)) {
+      return
+    }
+    setDraftSubcategories((current) => ({
+      ...current,
+      [activeCategory]: activeSubcategories.filter((_, i) => i !== index),
+    }))
+  }, [activeCategory, activeSubcategories, transactions])
 
   const handleRestore = async () => {
     if (!window.confirm('将支出分类恢复为系统默认并同步到云端？')) {
@@ -366,7 +451,9 @@ export function CategoryManagePage({ embedded = false, onClose }: CategoryManage
                 onEdit={() => {
                   setSwipedIndex(null)
                   setEditingIndex(index)
+                  setActiveCategoryIndex(index)
                 }}
+                onSelect={() => setActiveCategoryIndex(index)}
                 onDelete={() => removeAt(index)}
                 onDragStart={() => handleDragStart(index)}
                 onDragMove={handleDragMove}
@@ -377,6 +464,59 @@ export function CategoryManagePage({ embedded = false, onClose }: CategoryManage
             )
           })}
         </ul>
+
+        {activeCategory && (
+          <section className="category-subcategory-panel">
+            <div className="panel-header">
+              <div>
+                <p className="eyebrow">二级分类</p>
+                <h2>{activeCategory}</h2>
+              </div>
+            </div>
+            <div className="category-manager-add category-subcategory-add">
+              <input
+                type="text"
+                value={newSubcategoryName}
+                onChange={(e) => {
+                  setNewSubcategoryName(e.target.value)
+                  setError('')
+                }}
+                placeholder="新增二级分类"
+                className="category-manager-input"
+                maxLength={32}
+              />
+              <button type="button" className="secondary-button" onClick={addSubcategory}>
+                添加
+              </button>
+            </div>
+            <ul className="category-subcategory-list">
+              {activeSubcategories.map((name, index) => (
+                <li className="category-subcategory-row" key={`${activeCategory}-${index}`}>
+                  <input
+                    type="text"
+                    value={name}
+                    className="category-manager-input"
+                    onChange={(e) => updateSubcategory(index, e.target.value)}
+                    maxLength={32}
+                  />
+                  <span className="muted small">
+                    {countSubcategoryUsage(name, transactions) > 0
+                      ? `已使用 ${countSubcategoryUsage(name, transactions)} 次`
+                      : '未使用'}
+                  </span>
+                  <button
+                    type="button"
+                    className="text-button"
+                    disabled={activeSubcategories.length <= 1}
+                    onClick={() => removeSubcategory(index)}
+                  >
+                    删除
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
         {error && <p className="alert error category-manager-error">{error}</p>}
 
@@ -411,6 +551,7 @@ function CategoryManagerRow({
   onOpen,
   onClose,
   onEdit,
+  onSelect,
   onDelete,
   onDragStart,
   onDragMove,
@@ -429,6 +570,7 @@ function CategoryManagerRow({
   onOpen: () => void
   onClose: () => void
   onEdit: () => void
+  onSelect: () => void
   onDelete: () => void
   onDragStart: () => void
   onDragMove: (clientY: number) => void
@@ -501,6 +643,7 @@ function CategoryManagerRow({
         }`}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
+        onClick={onSelect}
       >
         {isEditing ? (
           <>

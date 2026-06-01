@@ -65,7 +65,8 @@ function AppRoutes() {
         </Route>
         <Route path="me/budget" element={<BudgetPage />} />
         <Route path="me/categories" element={<CategoryManagePage />} />
-        <Route path="more/monthly-report" element={<MonthlyReportPage />} />
+        <Route path="more/monthly-report" element={<Navigate to="/transactions/monthly-report" replace />} />
+        <Route path="transactions/monthly-report" element={<MonthlyReportPage />} />
         <Route path="transactions/report" element={<ReportPage />} />
         <Route path="*" element={<Navigate to="/ledger" replace />} />
       </Routes>

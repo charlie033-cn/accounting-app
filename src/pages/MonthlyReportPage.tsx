@@ -18,6 +18,10 @@ function formatMonthEntrance(month: string) {
   return year && value ? `${year}.${value}` : month
 }
 
+function isExpenseOnlyReportText(text: string) {
+  return !/(收入|结余|现金流|理财收益|工资)/.test(text)
+}
+
 export function MonthlyReportPage() {
   const { transactions, formatMoney, session } = useAccounting()
   const [month, setMonth] = useState(currentMonth)
@@ -41,8 +45,14 @@ export function MonthlyReportPage() {
   const reportKey = `${month}:${fingerprint}`
   const report = reports[reportKey] ?? null
   const fallback = Boolean(fallbackReports[reportKey])
-  const highlights = report?.highlights.length ? report.highlights : summary.localHighlights
-  const suggestions = report?.suggestions.length ? report.suggestions : summary.localSuggestions
+  const diagnosis =
+    report?.summary && isExpenseOnlyReportText(report.summary)
+      ? report.summary
+      : summary.charlieDiagnosis
+  const reportFindings = report?.highlights.filter(isExpenseOnlyReportText) ?? []
+  const reportStrategies = report?.suggestions.filter(isExpenseOnlyReportText) ?? []
+  const findings = reportFindings.length ? reportFindings : summary.charlieFindings
+  const strategies = reportStrategies.length ? reportStrategies : summary.charlieStrategies
 
   const generateReport = useCallback(async () => {
     if (summary.totalExpense <= 0 || loadingReportKey) {
@@ -106,18 +116,16 @@ export function MonthlyReportPage() {
     <main className="sub-page-shell monthly-report-shell">
       <div className="sub-page sub-page--standalone monthly-report-page">
         <header className="sub-page-nav">
-          <Link className="sub-page-icon-back" to="/more" aria-label="返回更多">
+          <Link className="sub-page-icon-back" to="/transactions" aria-label="返回账单">
             <span aria-hidden>←</span>
           </Link>
-          <h1 className="sub-page-title">我的月度消费报告</h1>
+          <h1 className="sub-page-title">我的消费洞察</h1>
         </header>
 
         <section className="panel monthly-report-hero">
+          <img className="monthly-report-hero-ip" src="/baogaoip-report-fullbody-transparent.png" alt="查理" />
           <div className="monthly-report-hero-head">
-            <div>
-              <p className="eyebrow">AI 消费报告</p>
-              <h2>{month} 月度消费报告</h2>
-            </div>
+            <span className="sr-only">本月诊断</span>
             <label className="monthly-report-month-entry">
               <span>{formatMonthEntrance(month)}</span>
               <input
@@ -132,33 +140,22 @@ export function MonthlyReportPage() {
           {summary.totalExpense <= 0 ? (
             <div className="empty-state monthly-report-empty">
               <h3>本月暂无消费数据</h3>
-              <p>添加或导入账单后，就可以生成月度消费报告。</p>
+              <p>添加或导入账单后，查理就能帮你看看这个月钱花哪了。</p>
             </div>
           ) : (
             <div className="monthly-report-ai-card">
               {loadingReportKey === reportKey ? (
-                <p className="monthly-report-loading">正在结合 AI 能力分析本月账单…</p>
+                <p className="monthly-report-loading">查理正在读你的账单，马上给出消费诊断…</p>
               ) : (
                 <>
                   <div className="monthly-report-ai-head">
-                    <strong>{report?.summary || '本月消费复盘'}</strong>
+                    <div className="monthly-report-ai-title-row">
+                      <span className="monthly-report-ai-badge">{formatMonthEntrance(month)} · 查理的观察</span>
+                    </div>
+                    <strong>{diagnosis}</strong>
                   </div>
                   {fallback && !report && (
-                    <p className="monthly-report-fallback">暂时无法生成完整 AI 报告，已先展示本地统计结论。</p>
-                  )}
-                  <ul className="monthly-report-highlights">
-                    {highlights.slice(0, 4).map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                  {suggestions.length > 0 && (
-                    <div className="monthly-report-suggestions">
-                      {suggestions.slice(0, 2).map((item) => (
-                        <p className="monthly-report-suggestion" key={item}>
-                          {item}
-                        </p>
-                      ))}
-                    </div>
+                    <p className="monthly-report-fallback">查理暂时无法联网分析，已先根据本地账单给出判断。</p>
                   )}
                 </>
               )}
@@ -174,12 +171,12 @@ export function MonthlyReportPage() {
                 <strong>{formatMoney(summary.totalExpense)}</strong>
               </article>
               <article>
-                <span>总收入</span>
-                <strong>{formatMoney(summary.totalIncome)}</strong>
+                <span>支出笔数</span>
+                <strong>{summary.expenseCount} 笔</strong>
               </article>
               <article>
-                <span>结余</span>
-                <strong>{formatMoney(summary.balance)}</strong>
+                <span>最高支出日</span>
+                <strong>{summary.topExpenseDay ? summary.topExpenseDay.date.slice(5) : '-'}</strong>
               </article>
               <article>
                 <span>日均支出</span>
@@ -190,7 +187,36 @@ export function MonthlyReportPage() {
             <section className="panel monthly-report-section">
               <div className="panel-header monthly-report-section-head">
                 <div>
-                  <p className="eyebrow">消费结构</p>
+                  <p className="eyebrow">查理发现这几件事</p>
+                  <h2>智能洞察</h2>
+                </div>
+              </div>
+              <ul className="monthly-report-highlights">
+                {findings.slice(0, 4).map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </section>
+
+            <section className="panel monthly-report-section">
+              <div className="panel-header monthly-report-section-head">
+                <div>
+                  <p className="eyebrow">你的本月消费画像</p>
+                  <h2>{summary.charlieProfile.title}</h2>
+                </div>
+              </div>
+              <p className="monthly-report-profile-desc">{summary.charlieProfile.description}</p>
+              <div className="monthly-report-profile-metrics">
+                {summary.charlieProfile.metrics.map((item) => (
+                  <span key={item}>{item}</span>
+                ))}
+              </div>
+            </section>
+
+            <section className="panel monthly-report-section">
+              <div className="panel-header monthly-report-section-head">
+                <div>
+                  <p className="eyebrow">钱主要花在哪</p>
                   <h2>分类占比</h2>
                 </div>
               </div>
@@ -213,7 +239,7 @@ export function MonthlyReportPage() {
             <section className="panel monthly-report-section">
               <div className="panel-header monthly-report-section-head">
                 <div>
-                  <p className="eyebrow">重点支出</p>
+                  <p className="eyebrow">查理重点关注</p>
                   <h2>本月大额消费</h2>
                 </div>
               </div>
@@ -222,13 +248,31 @@ export function MonthlyReportPage() {
                   <article className="monthly-report-expense-item" key={item.id}>
                     <div>
                       <strong>{item.note || item.category}</strong>
-                      <span>{item.transaction_date} · {item.category}</span>
+                      <span>{item.transaction_date} · {item.subcategory ? `${item.category} / ${item.subcategory}` : item.category}</span>
                     </div>
                     <em>{formatMoney(item.amount)}</em>
                   </article>
                 ))}
               </div>
             </section>
+
+            {strategies.length > 0 && (
+              <section className="panel monthly-report-section">
+                <div className="panel-header monthly-report-section-head">
+                  <div>
+                    <p className="eyebrow">查理给你的下月建议</p>
+                    <h2>下月策略</h2>
+                  </div>
+                </div>
+                <div className="monthly-report-suggestions">
+                  {strategies.slice(0, 3).map((item) => (
+                    <p className="monthly-report-suggestion" key={item}>
+                      {item}
+                    </p>
+                  ))}
+                </div>
+              </section>
+            )}
           </>
         )}
       </div>

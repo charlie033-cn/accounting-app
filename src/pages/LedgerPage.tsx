@@ -3,10 +3,11 @@ import { createPortal } from 'react-dom'
 import { currentMonth, todayISO } from '../accounting/constants'
 import { inferBuiltInCategory } from '../accounting/categoryRules'
 import { ConfirmActionSheet } from '../components/ConfirmActionSheet'
-import { daysInCalendarMonth } from '../accounting/format'
+import { dynamicDailyBudget } from '../accounting/budgetMath'
 import { useAccounting } from '../context/AccountingContext'
 import { parseReceiptFromImageDataUrl, type ReceiptParseDraft } from '../lib/parseReceiptTokenhub'
-import type { Transaction } from '../types/transaction'
+import { parseVoiceTransactionsWithTokenhub } from '../lib/parseVoiceTransactionTokenhub'
+import type { Transaction, TransactionFormState } from '../types/transaction'
 import { categoryEmoji } from '../utils/categoryEmoji'
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -58,6 +59,14 @@ type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition
 type SpeechWindow = Window & {
   SpeechRecognition?: BrowserSpeechRecognitionConstructor
   webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor
+}
+
+async function ensureMicrophonePermission() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return
+  }
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+  stream.getTracks().forEach((track) => track.stop())
 }
 
 function addDaysISO(offset: number) {
@@ -189,9 +198,10 @@ export function LedgerPage() {
     cancelEdit,
     handleSubmit,
     saveTransactionsFromDrafts,
-    beginEditTransaction,
+    updateTransaction,
     handleDeleteTransaction,
     categoryOptions,
+    subcategoryOptions,
     formatMoney,
     isLoading,
     error,
@@ -211,13 +221,26 @@ export function LedgerPage() {
   const [receiptParsing, setReceiptParsing] = useState(false)
   const [voiceListening, setVoiceListening] = useState(false)
   const [voiceStopping, setVoiceStopping] = useState(false)
+  const [voiceClosing, setVoiceClosing] = useState(false)
+  const [voiceAiParsing, setVoiceAiParsing] = useState(false)
   const [receiptError, setReceiptError] = useState('')
   const [receiptDrafts, setReceiptDrafts] = useState<ReceiptReviewItem[]>([])
   const [deleteTarget, setDeleteTarget] = useState<Transaction | null>(null)
+  const [editingItem, setEditingItem] = useState<Transaction | null>(null)
+  const [editDraft, setEditDraft] = useState<TransactionFormState>({
+    type: 'expense',
+    amount: '',
+    category: '',
+    subcategory: '',
+    transaction_date: todayISO(),
+    note: '',
+  })
+  const [editError, setEditError] = useState('')
   const [swipedTransactionId, setSwipedTransactionId] = useState<string | null>(null)
 
   const cm = currentMonth()
   const day = todayISO()
+  const autoTransactionDateRef = useRef(day)
 
   const stats = useMemo(() => {
     const monthRows = transactions.filter((item) => item.transaction_date.startsWith(cm))
@@ -236,10 +259,6 @@ export function LedgerPage() {
       .reduce((sum, item) => sum + item.amount, 0)
   }, [transactions, day])
 
-  /**
-   * 与「更多」一致：预算月份为当前月且上限大于 0 时展示。
-   * 当日剩余 = 本月预算÷当月天数 − 今日支出（与「更多」日均参考同一口径）。
-   */
   const ledgerBudgetStrip = useMemo(() => {
     if (budgetPeriod !== cm) {
       return null
@@ -247,11 +266,10 @@ export function LedgerPage() {
     if (budgetAmount == null || budgetAmount <= 0) {
       return null
     }
-    const days = daysInCalendarMonth(cm)
-    if (days <= 0) {
+    const daily = dynamicDailyBudget(cm, budgetAmount, stats.expense)
+    if (daily == null) {
       return null
     }
-    const daily = budgetAmount / days
     const todayVsDailyPercent =
       daily > 0 ? (todayExpenseTotal / daily) * 100 : null
     const monthVsBudgetPercent =
@@ -272,16 +290,28 @@ export function LedgerPage() {
       .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
   }, [transactions, day])
   const selectedReceiptDraftCount = receiptDrafts.filter((item) => item.selected).length
+  const expenseOptions = categoryOptions('expense')
+  const formSubcategoryOptions = subcategoryOptions(form.category)
 
   useEffect(() => {
-    if (editingId || form.amount || form.note || form.transaction_date === day) {
+    if (editingId || form.amount || form.note) {
       return
     }
-    setForm((current) => ({
-      ...current,
-      transaction_date: day,
-    }))
-  }, [day, editingId, form.amount, form.note, form.transaction_date, setForm])
+    setForm((current) => {
+      if (current.transaction_date === day) {
+        autoTransactionDateRef.current = day
+        return current
+      }
+      if (current.transaction_date !== autoTransactionDateRef.current) {
+        return current
+      }
+      autoTransactionDateRef.current = day
+      return {
+        ...current,
+        transaction_date: day,
+      }
+    })
+  }, [day, editingId, form.amount, form.note, setForm])
 
   useEffect(() => {
     return () => {
@@ -301,7 +331,7 @@ export function LedgerPage() {
     setMessage('已取消识图记账')
   }
 
-  const applyVoiceText = (text: string) => {
+  const applyLocalVoiceText = (text: string, message = '语音已填入，请核对后保存') => {
     const expenseOptions = categoryOptions('expense')
     const amount = parseVoiceAmount(text)
     if (!amount) {
@@ -312,12 +342,54 @@ export function LedgerPage() {
       type: 'expense',
       amount,
       category: parseVoiceCategory(text, expenseOptions),
+      subcategory: '',
       transaction_date: parseVoiceDate(text),
       note: cleanVoiceNote(text),
     })
     setReceiptError('')
     setError('')
-    setMessage('语音已填入，请核对后保存')
+    setMessage(message)
+  }
+
+  const applyVoiceText = async (text: string) => {
+    const expenseOptions = categoryOptions('expense')
+    setVoiceAiParsing(true)
+    try {
+      const aiDrafts = await parseVoiceTransactionsWithTokenhub({
+        text,
+        categories: expenseOptions,
+      })
+      if (aiDrafts.length === 1) {
+        const draft = aiDrafts[0]
+        setForm({
+          ...draft,
+          subcategory: draft.subcategory || '',
+        })
+        setReceiptError('')
+        setError('')
+        setMessage('AI 语音记账已填入，请核对后保存')
+        return
+      }
+      if (aiDrafts.length > 1) {
+        setReceiptDrafts(
+          aiDrafts.map((draft, index) => ({
+            ...draft,
+            subcategory: draft.subcategory || '',
+            id: `${Date.now()}-voice-${index}`,
+            selected: true,
+          })),
+        )
+        setReceiptError('')
+        setError('')
+        setMessage(`AI 识别到 ${aiDrafts.length} 笔账单，请核对后保存`)
+        return
+      }
+    } catch {
+      // Keep voice accounting usable even if the AI cloud function is unavailable.
+    } finally {
+      setVoiceAiParsing(false)
+    }
+    applyLocalVoiceText(text, 'AI 暂不可用，已用本地规则填入，请核对后保存')
   }
 
   const resetVoiceDraftForm = () => {
@@ -326,12 +398,13 @@ export function LedgerPage() {
       type: 'expense',
       amount: '',
       category: expenseOptions[0] ?? '其他',
+      subcategory: '',
       transaction_date: todayISO(),
       note: '',
     })
   }
 
-  const startVoiceAccounting = () => {
+  const startVoiceAccounting = async () => {
     const SpeechRecognition =
       (window as SpeechWindow).SpeechRecognition ?? (window as SpeechWindow).webkitSpeechRecognition
     if (!SpeechRecognition) {
@@ -339,9 +412,18 @@ export function LedgerPage() {
       return
     }
 
+    setReceiptError('')
+    try {
+      await ensureMicrophonePermission()
+    } catch {
+      setReceiptError('请允许麦克风权限后再试')
+      return
+    }
+
     voiceRecognitionRef.current?.abort()
     voiceTranscriptRef.current = ''
     voiceShouldApplyRef.current = false
+    setVoiceAiParsing(false)
     resetVoiceDraftForm()
     const recognition = new SpeechRecognition()
     voiceRecognitionRef.current = recognition
@@ -371,6 +453,8 @@ export function LedgerPage() {
       setReceiptError(message)
       setVoiceListening(false)
       setVoiceStopping(false)
+      setVoiceClosing(false)
+      setVoiceAiParsing(false)
     }
     recognition.onend = () => {
       if (voiceRecognitionRef.current !== recognition) {
@@ -382,6 +466,7 @@ export function LedgerPage() {
       voiceRecognitionRef.current = null
       setVoiceListening(false)
       setVoiceStopping(false)
+      setVoiceClosing(false)
       if (!shouldApply) {
         return
       }
@@ -389,16 +474,18 @@ export function LedgerPage() {
         setReceiptError('没有听清楚，请再试一次')
         return
       }
-      applyVoiceText(transcript)
+      void applyVoiceText(transcript)
     }
-    setReceiptError('')
     setVoiceListening(true)
     setVoiceStopping(false)
+    setVoiceClosing(false)
     try {
       recognition.start()
     } catch {
       setVoiceListening(false)
       setVoiceStopping(false)
+      setVoiceClosing(false)
+      setVoiceAiParsing(false)
       setReceiptError('语音识别启动失败，请稍后再试')
     }
   }
@@ -406,13 +493,17 @@ export function LedgerPage() {
   const stopVoiceAccounting = () => {
     voiceShouldApplyRef.current = true
     setVoiceStopping(true)
-    try {
-      voiceRecognitionRef.current?.stop()
-    } catch {
-      setVoiceListening(false)
-      setVoiceStopping(false)
-      setReceiptError('语音识别结束失败，请再试一次')
-    }
+    setVoiceClosing(true)
+    window.setTimeout(() => {
+      try {
+        voiceRecognitionRef.current?.stop()
+      } catch {
+        setVoiceListening(false)
+        setVoiceStopping(false)
+        setVoiceClosing(false)
+        setReceiptError('语音识别结束失败，请再试一次')
+      }
+    }, 180)
   }
 
   const cancelVoiceAccounting = () => {
@@ -420,6 +511,8 @@ export function LedgerPage() {
     voiceTranscriptRef.current = ''
     setVoiceListening(false)
     setVoiceStopping(false)
+    setVoiceClosing(false)
+    setVoiceAiParsing(false)
     voiceRecognitionRef.current?.abort()
   }
 
@@ -442,6 +535,7 @@ export function LedgerPage() {
           type: 'expense',
           amount: item.amount,
           category: item.category,
+          subcategory: item.subcategory || '',
           transaction_date: item.transaction_date,
           note: item.note,
         })),
@@ -482,13 +576,17 @@ export function LedgerPage() {
       if (receiptParseRunRef.current !== runId) {
         return
       }
-      const normalized = drafts.map((draft, index) => ({
-        ...draft,
-        id: `${Date.now()}-${index}`,
-        selected: true,
-        type: 'expense' as const,
-        category: inferBuiltInCategory(`${draft.category} ${draft.note}`, 'expense', categoryOptions('expense')) || pickCategory(draft.category, categoryOptions('expense')),
-      }))
+      const normalized = drafts.map((draft, index) => {
+        const category = inferBuiltInCategory(`${draft.category} ${draft.note}`, 'expense', categoryOptions('expense')) || pickCategory(draft.category, categoryOptions('expense'))
+        return {
+          ...draft,
+          id: `${Date.now()}-${index}`,
+          selected: true,
+          type: 'expense' as const,
+          category,
+          subcategory: draft.subcategory || '',
+        }
+      })
 
       if (normalized.length === 1) {
         const draft = normalized[0]
@@ -496,6 +594,7 @@ export function LedgerPage() {
           type: 'expense',
           amount: draft.amount,
           category: draft.category,
+          subcategory: draft.subcategory || '',
           transaction_date: draft.transaction_date,
           note: draft.note,
         })
@@ -536,12 +635,12 @@ export function LedgerPage() {
               <p className="ledger-budget-strip-label">当日剩余预算</p>
               <p
                 className={`ledger-budget-strip-value${ledgerBudgetStrip.dayRem < 0 ? ' over' : ''}`}
-                title="（本月预算÷当月天数）− 今日支出"
+                title="（本月剩余预算÷本月剩余天数）− 今日支出"
               >
                 {formatMoney(ledgerBudgetStrip.dayRem)}
               </p>
               <p className="muted small ledger-budget-strip-meta">
-                日均 {formatMoney(ledgerBudgetStrip.daily)}
+                今日可用 {formatMoney(ledgerBudgetStrip.daily)}
               </p>
             </div>
             <div className="ledger-budget-strip-col">
@@ -563,7 +662,7 @@ export function LedgerPage() {
                   {ledgerBudgetStrip.todayVsDailyPercent != null && (
                     <>
                       <div className="ledger-budget-meter-line">
-                        <span>已支出</span>
+                        <span>日支出</span>
                         <strong
                           className={
                             ledgerBudgetStrip.todayVsDailyPercent > 100 ? 'over' : undefined
@@ -599,7 +698,7 @@ export function LedgerPage() {
                   {ledgerBudgetStrip.monthVsBudgetPercent != null && (
                     <>
                       <div className="ledger-budget-meter-line">
-                        <span>已支出</span>
+                        <span>月支出</span>
                         <strong
                           className={
                             ledgerBudgetStrip.monthVsBudgetPercent > 100 ? 'over' : undefined
@@ -660,19 +759,19 @@ export function LedgerPage() {
             <button
               type="button"
               className="secondary-button ledger-receipt-scan-btn ledger-voice-btn"
-              onClick={startVoiceAccounting}
-              disabled={isLoading || receiptParsing || voiceListening}
+              onClick={() => void startVoiceAccounting()}
+              disabled={isLoading || receiptParsing || voiceListening || voiceAiParsing}
             >
               <span className="ledger-voice-icon" aria-hidden>
                 声
               </span>
-              {voiceListening ? '聆听中…' : '语音记账'}
+              {voiceAiParsing ? '思考中…' : voiceListening ? '聆听中…' : '语音记账'}
             </button>
             <button
               type="button"
               className="secondary-button ledger-receipt-scan-btn"
               onClick={openReceiptPicker}
-              disabled={isLoading || receiptParsing || voiceListening}
+              disabled={isLoading || receiptParsing || voiceListening || voiceAiParsing}
             >
               <img
                 className="ledger-receipt-scan-icon"
@@ -703,19 +802,21 @@ export function LedgerPage() {
               value={form.amount}
               onChange={(event) => setForm({ ...form, type: 'expense', amount: event.target.value })}
               placeholder="0.00"
-              required
             />
           </span>
         </label>
 
-        <div className="form-row-2 ledger-category-date-row">
+        <div className="form-row-2 ledger-category-row">
           <label>
             <span className="sr-only">分类</span>
             <select
               value={form.category}
-              onChange={(event) => setForm({ ...form, type: 'expense', category: event.target.value })}
+              onChange={(event) => {
+                const category = event.target.value
+                setForm({ ...form, type: 'expense', category, subcategory: '' })
+              }}
             >
-              {categoryOptions('expense').map((category) => (
+              {expenseOptions.map((category) => (
                 <option key={category} value={category}>
                   {category}
                 </option>
@@ -723,26 +824,60 @@ export function LedgerPage() {
             </select>
           </label>
           <label>
+            <span className="sr-only">二级分类</span>
+            <span className="select-placeholder-wrap">
+              <span
+                className={`select-display-text${!form.subcategory ? ' placeholder' : ''}`}
+                style={{ color: form.subcategory ? undefined : '#9ca3af' }}
+              >
+                {form.subcategory || '二级类别（可选）'}
+              </span>
+              <span className="select-display-arrow" aria-hidden>
+                ⌄
+              </span>
+              <select
+                className="select-native-overlay"
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  opacity: 0,
+                  width: '100%',
+                  height: '100%',
+                }}
+                value={form.subcategory}
+                onChange={(event) => setForm({ ...form, type: 'expense', subcategory: event.target.value })}
+              >
+                <option value="">无</option>
+                {formSubcategoryOptions.map((subcategory) => (
+                  <option key={subcategory} value={subcategory}>
+                    {subcategory}
+                  </option>
+                ))}
+              </select>
+            </span>
+          </label>
+        </div>
+
+        <div className="form-row-2 ledger-date-note-row">
+          <label>
             <span className="sr-only">日期</span>
             <input
               type="date"
               value={form.transaction_date}
               onChange={(event) => setForm({ ...form, type: 'expense', transaction_date: event.target.value })}
-              required
+            />
+          </label>
+          <label className="ledger-note-field">
+            <span className="sr-only">备注</span>
+            <input
+              className="ledger-compact-note"
+              type="text"
+              value={form.note}
+              onChange={(event) => setForm({ ...form, type: 'expense', note: event.target.value })}
+              placeholder="备注"
             />
           </label>
         </div>
-
-        <label className="ledger-note-field">
-          <span className="sr-only">备注</span>
-          <textarea
-            className="ledger-compact-note"
-            value={form.note}
-            onChange={(event) => setForm({ ...form, type: 'expense', note: event.target.value })}
-            placeholder="选填，如：晚餐、打车"
-            rows={1}
-          />
-        </label>
 
         {error && <p className="alert error">{error}</p>}
 
@@ -813,12 +948,31 @@ export function LedgerPage() {
                       <select
                         value={draft.category}
                         onChange={(event) =>
-                          updateReceiptDraft(draft.id, { category: event.target.value })
+                          updateReceiptDraft(draft.id, {
+                            category: event.target.value,
+                            subcategory: '',
+                          })
                         }
                       >
-                        {categoryOptions('expense').map((category) => (
+                        {expenseOptions.map((category) => (
                           <option key={category} value={category}>
                             {category}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      二级分类
+                      <select
+                        value={draft.subcategory ?? ''}
+                        onChange={(event) =>
+                          updateReceiptDraft(draft.id, { subcategory: event.target.value })
+                        }
+                      >
+                        <option value="">无</option>
+                        {subcategoryOptions(draft.category).map((subcategory) => (
+                          <option key={subcategory} value={subcategory}>
+                            {subcategory}
                           </option>
                         ))}
                       </select>
@@ -902,7 +1056,7 @@ export function LedgerPage() {
         <div className="ledger-receipt-sheet-layer" role="presentation">
           <div className="ledger-receipt-sheet-backdrop" aria-hidden />
           <section
-            className="ledger-receipt-sheet ledger-voice-sheet"
+            className={`ledger-receipt-sheet ledger-voice-sheet${voiceClosing ? ' ledger-receipt-sheet--closing' : ''}`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="ledger-voice-sheet-title"
@@ -936,6 +1090,13 @@ export function LedgerPage() {
         document.body,
       )}
 
+      {voiceAiParsing && createPortal(
+        <div className="app-toast" role="status" aria-live="polite">
+          查理正在快速思考中···
+        </div>,
+        document.body,
+      )}
+
       <section className="panel ledger-list">
         <div className="panel-header">
           <div>
@@ -962,7 +1123,16 @@ export function LedgerPage() {
                 }
                 onEdit={() => {
                   setSwipedTransactionId(null)
-                  beginEditTransaction(item)
+                  setEditError('')
+                  setEditingItem(item)
+                  setEditDraft({
+                    type: item.type,
+                    amount: String(item.amount),
+                    category: item.category,
+                    subcategory: item.subcategory ?? '',
+                    transaction_date: item.transaction_date,
+                    note: item.note ?? '',
+                  })
                 }}
                 onDelete={() => {
                   setSwipedTransactionId(null)
@@ -973,6 +1143,144 @@ export function LedgerPage() {
           )}
         </div>
       </section>
+      {editingItem && createPortal(
+        <div className="ledger-receipt-sheet-layer" role="presentation">
+          <button
+            type="button"
+            className="ledger-receipt-sheet-backdrop"
+            aria-label="关闭编辑账单"
+            onClick={() => setEditingItem(null)}
+            disabled={isLoading}
+          />
+          <section
+            className="ledger-receipt-sheet transaction-edit-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ledger-today-edit-title"
+          >
+            <div className="ledger-receipt-review-head">
+              <h3 id="ledger-today-edit-title">编辑账单</h3>
+              <button
+                type="button"
+                className="ledger-receipt-sheet-close"
+                aria-label="关闭编辑账单"
+                onClick={() => setEditingItem(null)}
+                disabled={isLoading}
+              >
+                ×
+              </button>
+            </div>
+            <div className="form-grid transaction-edit-form">
+              <label>
+                金额
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.01"
+                  value={editDraft.amount}
+                  onChange={(event) =>
+                    setEditDraft((current) => ({ ...current, amount: event.target.value }))
+                  }
+                  placeholder="0.00"
+                />
+              </label>
+              <div className="form-row-2">
+                <label>
+                  分类
+                  <select
+                    value={editDraft.category}
+                    onChange={(event) => {
+                      const category = event.target.value
+                      setEditDraft((current) => ({
+                        ...current,
+                        category,
+                        subcategory: '',
+                      }))
+                    }}
+                  >
+                    {expenseOptions.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  二级分类
+                  <select
+                    value={editDraft.subcategory}
+                    onChange={(event) =>
+                      setEditDraft((current) => ({ ...current, subcategory: event.target.value }))
+                    }
+                  >
+                    <option value="">无</option>
+                    {subcategoryOptions(editDraft.category).map((subcategory) => (
+                      <option key={subcategory} value={subcategory}>
+                        {subcategory}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  日期
+                  <input
+                    type="date"
+                    value={editDraft.transaction_date}
+                    onChange={(event) =>
+                      setEditDraft((current) => ({
+                        ...current,
+                        transaction_date: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+              </div>
+              <label>
+                备注
+                <textarea
+                  className="ledger-compact-note"
+                  value={editDraft.note}
+                  onChange={(event) =>
+                    setEditDraft((current) => ({ ...current, note: event.target.value }))
+                  }
+                  placeholder="选填"
+                  rows={1}
+                />
+              </label>
+              {editError && <p className="alert error transaction-edit-error">{editError}</p>}
+            </div>
+            <div className="ledger-receipt-sheet-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setEditingItem(null)}
+                disabled={isLoading}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => {
+                  void updateTransaction(editingItem.id, editDraft)
+                    .then(() => {
+                      setEditError('')
+                      setEditingItem(null)
+                    })
+                    .catch((err) => {
+                      setEditError(err instanceof Error ? err.message : '保存失败')
+                    })
+                }}
+                disabled={isLoading}
+              >
+                {isLoading ? '保存中...' : '保存'}
+              </button>
+            </div>
+          </section>
+        </div>,
+        document.body,
+      )}
       <ConfirmActionSheet
         open={deleteTarget != null}
         title="删除账单"
@@ -1065,7 +1373,9 @@ function TransactionRow({
             {categoryEmoji(item.category, item.type)}
           </span>
           <div className="transaction-item-meta">
-            <strong className="transaction-item-category">{item.category}</strong>
+            <strong className="transaction-item-category">
+              {item.subcategory ? `${item.category} / ${item.subcategory}` : item.category}
+            </strong>
             <span className="transaction-item-date">{item.transaction_date}</span>
           </div>
           <p className={`transaction-item-amount ${item.type}`}>

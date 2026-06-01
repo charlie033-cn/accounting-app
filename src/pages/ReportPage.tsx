@@ -493,7 +493,9 @@ export function ReportPage() {
                         {categoryEmoji(row.category, row.type)}
                       </span>
                       <div className="transaction-item-meta">
-                        <strong className="transaction-item-category">{row.category}</strong>
+                        <strong className="transaction-item-category">
+                          {row.subcategory ? `${row.category} / ${row.subcategory}` : row.category}
+                        </strong>
                         <span className="transaction-item-date">{row.transaction_date}</span>
                       </div>
                       <p className={`transaction-item-amount ${row.type}`}>

@@ -1,6 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Link } from 'react-router-dom'
 import { todayISO } from '../accounting/constants'
 import { useAccounting } from '../context/AccountingContext'
 import { splitRecurringAmount } from '../lib/recurringSchedule'
@@ -34,10 +33,12 @@ export function MorePage() {
     deleteRecurringTemplate,
     setRecurringPaused,
     categoryOptions,
+    subcategoryOptions,
   } = useAccounting()
 
   const expenseOpts = categoryOptions('expense')
   const [rCategory, setRCategory] = useState(() => expenseOpts[0] ?? '')
+  const [rSubcategory, setRSubcategory] = useState('')
 
   useEffect(() => {
     if (expenseOpts.length === 0) {
@@ -45,8 +46,20 @@ export function MorePage() {
     }
     if (!expenseOpts.includes(rCategory)) {
       setRCategory(expenseOpts[0])
+      setRSubcategory('')
     }
   }, [expenseOpts, rCategory])
+
+  const recurringSubcategoryOptions = subcategoryOptions(rCategory)
+
+  useEffect(() => {
+    if (!rSubcategory) {
+      return
+    }
+    if (!recurringSubcategoryOptions.includes(rSubcategory)) {
+      setRSubcategory('')
+    }
+  }, [rSubcategory, recurringSubcategoryOptions])
 
   const [rName, setRName] = useState('')
   const [rAmount, setRAmount] = useState('')
@@ -92,6 +105,7 @@ export function MorePage() {
         amount: rBillingType === 'installment' ? splitRecurringAmount(amount, Math.floor(rMonths), 0) : amount,
         total_amount: rBillingType === 'installment' ? amount : null,
         category: rCategory,
+        subcategory: rSubcategory || null,
         day_of_month: day,
         start_period: rStartDate.slice(0, 7),
         start_date: rStartDate,
@@ -99,6 +113,7 @@ export function MorePage() {
       })
       setRName('')
       setRAmount('')
+      setRSubcategory('')
       setRStartDate(todayISO())
       setRMonths(12)
       setRBillingType('fixed')
@@ -111,17 +126,6 @@ export function MorePage() {
 
   return (
     <div className="tab-page">
-      <section className="panel more-report-panel">
-        <Link className="more-report-card" to="/more/monthly-report">
-          <div className="more-report-card-content">
-            <p className="eyebrow">查理轻松记</p>
-            <h2>我的AI消费报告</h2>
-            <span className="more-report-card-button">查看月度报告</span>
-          </div>
-          <img className="more-report-card-ip" src="/自动抠图人物%203.png" alt="AI 消费报告助手" />
-        </Link>
-      </section>
-
       <section className="panel recurring-panel">
         <div className="panel-header">
           <div>
@@ -172,7 +176,7 @@ export function MorePage() {
               />
             </span>
           </label>
-          <div className="form-row-2 recurring-name-category-row">
+          <div className="recurring-name-row">
             <label>
               名称
               <input
@@ -182,12 +186,25 @@ export function MorePage() {
                 required
               />
             </label>
+          </div>
+          <div className="form-row-2 recurring-category-row">
             <label>
-              分类
+              一级分类
               <select value={rCategory} onChange={(e) => setRCategory(e.target.value)}>
                 {expenseOpts.map((c) => (
                   <option key={c} value={c}>
                     {c}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              二级分类
+              <select value={rSubcategory} onChange={(e) => setRSubcategory(e.target.value)}>
+                <option value="">无</option>
+                {recurringSubcategoryOptions.map((subcategory) => (
+                  <option key={subcategory} value={subcategory}>
+                    {subcategory}
                   </option>
                 ))}
               </select>
@@ -299,7 +316,7 @@ export function MorePage() {
                             : `${formatMoney(t.amount)} / 期 · 共 ${t.duration_months} 期`}
                         </p>
                         <p className="muted small recurring-item-meta">
-                          每月 {t.day_of_month} 号 · {recurringStartDate(t)} 起 · {t.category}
+                          每月 {t.day_of_month} 号 · {recurringStartDate(t)} 起 · {t.subcategory ? `${t.category} / ${t.subcategory}` : t.category}
                         </p>
                       </div>
                       <div className="recurring-actions">

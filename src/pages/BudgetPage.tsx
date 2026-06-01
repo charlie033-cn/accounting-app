@@ -125,11 +125,11 @@ export function BudgetPage() {
                   <strong>{formatMoney(monthExpenseTotal)}</strong>
                 </div>
                 <div className="budget-summary-item">
-                  <span>日均参考</span>
+                  <span>动态日预算</span>
                   <strong>{formatMoney(dailyBudgetReference)}</strong>
                 </div>
                 <div className="budget-summary-item">
-                  <span>预算天数</span>
+                  <span>剩余预算天数</span>
                   <strong>{budgetDays} 天</strong>
                 </div>
               </div>
@@ -138,7 +138,7 @@ export function BudgetPage() {
                 {budgetPeriod === currentMonth() && todayVsDailyPercent != null && (
                   <div className="budget-meter-block">
                     <div className="budget-line">
-                      <span>今日支出 · 占日均</span>
+                      <span>今日支出 · 占动态日预算</span>
                       <strong className={todayVsDailyPercent > 100 ? 'over' : undefined}>
                         {formatMoney(todayExpenseTotal)} · {todayVsDailyPercent.toFixed(0)}%
                       </strong>
@@ -149,7 +149,7 @@ export function BudgetPage() {
                       aria-valuemin={0}
                       aria-valuemax={100}
                       aria-valuenow={Math.round(Math.min(100, todayVsDailyPercent))}
-                      aria-label="今日支出占日均比例"
+                      aria-label="今日支出占动态日预算比例"
                     >
                       <div
                         className={`meter-fill today ${todayVsDailyPercent > 100 ? 'over' : ''}`}

@@ -6,14 +6,15 @@
 const DEFAULT_BASE = 'https://tokenhub.tencentmaas.com/v1'
 const DEFAULT_MODEL = 'deepseek-v3.1-terminus'
 
-const SYSTEM_PROMPT = `你是个人记账 App 的 AI 消费分析助手。基于聚合后的账单摘要，生成专业、智能、有趣但不夸张的中文消费报告。
+const SYSTEM_PROMPT = `你是个人记账 App 的智能消费助手，名字叫“查理”。你要以查理读完用户账单后的口吻，生成专业、智能、有趣但不夸张的中文消费报告。
 必须只输出 JSON 对象，不要 markdown 代码围栏，不要解释。
 输出格式：{"summary":"一句总述","highlights":["要点1","要点2"],"suggestions":["建议1"]}。
 要求：
 - 不要编造输入里没有的数据。
-- summary 要像一个聪明的月度复盘结论，可以稍微生动，但不要油腻、不要口号化。
-- highlights 2-4 条，指出消费结构、集中项、异常或值得注意的变化，表达要像真人读完账单后的观察。
-- suggestions 1-2 条，要温和、具体、可执行，可以给出下月预算、消费节奏、分类控制或记录习惯方面的建议。
+- 这个 App 的报告只分析支出，不要提收入、结余、理财收益或现金流。
+- summary 要以“查理看完账单...”类似语气给出一句诊断，体现判断和解释，不要像统计标题。
+- highlights 2-4 条，指出消费结构、集中项、异常、恩格尔系数、周末消费、固定支出压力等值得注意的变化；只能使用输入里有的数据或可由输入计算出的事实。
+- suggestions 1-2 条，要像查理给用户支招，温和、具体、可执行，可以给出下月预算、消费节奏、分类控制或记录习惯方面的建议。
 - 文案适合普通用户阅读，避免投资建议、道德评判和制造焦虑。`
 
 function parseJsonFromModelContent(text) {
@@ -38,9 +39,13 @@ function normalizeText(v, max = 160) {
   return typeof v === 'string' ? v.trim().slice(0, max) : ''
 }
 
+function isExpenseOnlyText(v) {
+  return !/(收入|结余|现金流|理财收益|工资)/.test(v)
+}
+
 function normalizeList(v, maxItems) {
   return Array.isArray(v)
-    ? v.map((item) => normalizeText(item, 120)).filter(Boolean).slice(0, maxItems)
+    ? v.map((item) => normalizeText(item, 120)).filter(Boolean).filter(isExpenseOnlyText).slice(0, maxItems)
     : []
 }
 
@@ -110,7 +115,7 @@ exports.main = async (event) => {
   }
 
   const out = {
-    summary: normalizeText(parsed.summary, 160),
+    summary: isExpenseOnlyText(normalizeText(parsed.summary, 160)) ? normalizeText(parsed.summary, 160) : '',
     highlights: normalizeList(parsed.highlights, 4),
     suggestions: normalizeList(parsed.suggestions, 2),
   }

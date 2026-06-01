@@ -5,6 +5,7 @@ export type ReceiptParseDraft = {
   type: 'income' | 'expense'
   amount: string
   category: string
+  subcategory?: string
   transaction_date: string
   note: string
 }

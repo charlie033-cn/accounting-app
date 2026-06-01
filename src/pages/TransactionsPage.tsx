@@ -24,6 +24,7 @@ export function TransactionsPage() {
     updateTransaction,
     handleDeleteTransaction,
     categoryOptions,
+    subcategoryOptions,
     isLoading,
   } = useAccounting()
 
@@ -32,6 +33,7 @@ export function TransactionsPage() {
   const [filterMonth, setFilterMonth] = useState(currentMonth)
   const [filterYear, setFilterYear] = useState(currentYear)
   const [selectedCategory, setSelectedCategory] = useState('all')
+  const [selectedSubcategory, setSelectedSubcategory] = useState('all')
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [swipedId, setSwipedId] = useState<string | null>(null)
   const [editingItem, setEditingItem] = useState<Transaction | null>(null)
@@ -39,6 +41,7 @@ export function TransactionsPage() {
     type: 'expense',
     amount: '',
     category: '',
+    subcategory: '',
     transaction_date: todayISO(),
     note: '',
   })
@@ -46,16 +49,27 @@ export function TransactionsPage() {
 
   const chartPeriod = timeView === 'year' ? filterYear : timeView === 'day' ? filterDay.slice(0, 7) : filterMonth
 
+  const expenseOptions = categoryOptions('expense')
   const availableCategories = useMemo(() => {
-    const categories = new Set(transactions.map((item) => item.category))
-    return Array.from(categories).sort((a, b) => a.localeCompare(b, 'zh-CN'))
-  }, [transactions])
+    return expenseOptions
+  }, [expenseOptions])
+
+  const availableSubcategories = useMemo(() => {
+    if (selectedCategory === 'all') {
+      return []
+    }
+    return subcategoryOptions(selectedCategory)
+  }, [selectedCategory, subcategoryOptions])
+
+  const firstSubcategory = (category: string) => subcategoryOptions(category)[0] ?? ''
 
   const expenseChartItems = useMemo<ExpenseChartItem[]>(() => {
     const categoryOk = (category: string) =>
       selectedCategory === 'all' || category === selectedCategory
+    const subcategoryOk = (subcategory?: string | null) =>
+      selectedSubcategory === 'all' || subcategory === selectedSubcategory
     const expenseRows = transactions.filter(
-      (item) => item.type === 'expense' && categoryOk(item.category),
+      (item) => item.type === 'expense' && categoryOk(item.category) && subcategoryOk(item.subcategory),
     )
 
     if (timeView === 'year') {
@@ -90,7 +104,7 @@ export function TransactionsPage() {
         active: timeView === 'day' ? filterDay === date : todayISO() === date,
       }
     })
-  }, [transactions, timeView, filterYear, chartPeriod, selectedCategory, filterDay])
+  }, [transactions, timeView, filterYear, chartPeriod, selectedCategory, selectedSubcategory, filterDay])
 
   const chartMaxExpense = useMemo(
     () => Math.max(...expenseChartItems.map((item) => item.amount), 0),
@@ -118,9 +132,10 @@ export function TransactionsPage() {
             ? item.transaction_date.startsWith(filterMonth)
             : filterYear.length === 4 && item.transaction_date.startsWith(filterYear)
       const matchCategory = selectedCategory === 'all' || item.category === selectedCategory
-      return dateOk && matchCategory
+      const matchSubcategory = selectedSubcategory === 'all' || item.subcategory === selectedSubcategory
+      return dateOk && matchCategory && matchSubcategory
     })
-  }, [transactions, timeView, filterDay, filterMonth, filterYear, selectedCategory])
+  }, [transactions, timeView, filterDay, filterMonth, filterYear, selectedCategory, selectedSubcategory])
 
   const rangeLabel =
     timeView === 'day'
@@ -136,6 +151,17 @@ export function TransactionsPage() {
       <header className="tab-page-header transactions-tab-header">
         <h1 className="app-title">账单</h1>
       </header>
+
+      <section className="panel more-report-panel transactions-report-entry-panel">
+        <Link className="more-report-card" to="/transactions/monthly-report">
+          <div className="more-report-card-content">
+            <p className="eyebrow">查理轻松记</p>
+            <h2>我的消费洞察</h2>
+            <span className="more-report-card-button">查看月度报告</span>
+          </div>
+          <img className="more-report-card-ip" src="/baogaoip.png" alt="我的消费洞察助手" />
+        </Link>
+      </section>
 
       <section className="panel ledger-list">
         <div className="panel-header">
@@ -178,49 +204,70 @@ export function TransactionsPage() {
         </div>
 
         <div className="transactions-filters">
-          {timeView === 'day' && (
-            <label aria-label="日期">
-              <input
-                type="date"
-                value={filterDay}
-                onChange={(event) => setFilterDay(event.target.value)}
-              />
+          <div className="transactions-time-filter-row">
+            {timeView === 'day' && (
+              <label aria-label="日期">
+                <input
+                  type="date"
+                  value={filterDay}
+                  onChange={(event) => setFilterDay(event.target.value)}
+                />
+              </label>
+            )}
+            {timeView === 'month' && (
+              <label aria-label="月份">
+                <input
+                  type="month"
+                  value={filterMonth}
+                  onChange={(event) => setFilterMonth(event.target.value)}
+                />
+              </label>
+            )}
+            {timeView === 'year' && (
+              <label aria-label="年份">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={2000}
+                  max={2100}
+                  value={filterYear}
+                  onChange={(event) => setFilterYear(event.target.value.slice(0, 4))}
+                />
+              </label>
+            )}
+          </div>
+          <div className="transactions-category-filter-row">
+            <label aria-label="分类">
+              <select
+                value={selectedCategory}
+                onChange={(event) => {
+                  setSelectedCategory(event.target.value)
+                  setSelectedSubcategory('all')
+                }}
+              >
+                <option value="all">全部</option>
+                {availableCategories.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+              </select>
             </label>
-          )}
-          {timeView === 'month' && (
-            <label aria-label="月份">
-              <input
-                type="month"
-                value={filterMonth}
-                onChange={(event) => setFilterMonth(event.target.value)}
-              />
+            <label aria-label="二级分类">
+              <select
+                value={selectedSubcategory}
+                onChange={(event) => setSelectedSubcategory(event.target.value)}
+                disabled={selectedCategory === 'all'}
+              >
+                <option value="all">全部二级</option>
+                {availableSubcategories.map((subcategory) => (
+                  <option key={subcategory} value={subcategory}>
+                    {subcategory}
+                  </option>
+                ))}
+              </select>
             </label>
-          )}
-          {timeView === 'year' && (
-            <label aria-label="年份">
-              <input
-                type="number"
-                inputMode="numeric"
-                min={2000}
-                max={2100}
-                value={filterYear}
-                onChange={(event) => setFilterYear(event.target.value.slice(0, 4))}
-              />
-            </label>
-          )}
-          <label aria-label="分类">
-            <select
-              value={selectedCategory}
-              onChange={(event) => setSelectedCategory(event.target.value)}
-            >
-              <option value="all">全部</option>
-              {availableCategories.map((category) => (
-                <option key={category} value={category}>
-                  {category}
-                </option>
-              ))}
-            </select>
-          </label>
+          </div>
         </div>
 
         <section className="transactions-chart" aria-label="支出柱状图">
@@ -293,6 +340,7 @@ export function TransactionsPage() {
                     type: 'expense',
                     amount: String(item.amount),
                     category: item.category,
+                    subcategory: item.subcategory ?? '',
                     transaction_date: item.transaction_date,
                     note: item.note ?? '',
                   })
@@ -353,13 +401,33 @@ export function TransactionsPage() {
                   分类
                   <select
                     value={editDraft.category}
-                    onChange={(event) =>
-                      setEditDraft((current) => ({ ...current, category: event.target.value }))
-                    }
+                    onChange={(event) => {
+                      const category = event.target.value
+                      setEditDraft((current) => ({
+                        ...current,
+                        category,
+                        subcategory: firstSubcategory(category),
+                      }))
+                    }}
                   >
-                    {categoryOptions('expense').map((category) => (
+                    {expenseOptions.map((category) => (
                       <option key={category} value={category}>
                         {category}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  二级分类
+                  <select
+                    value={editDraft.subcategory}
+                    onChange={(event) =>
+                      setEditDraft((current) => ({ ...current, subcategory: event.target.value }))
+                    }
+                  >
+                    {subcategoryOptions(editDraft.category).map((subcategory) => (
+                      <option key={subcategory} value={subcategory}>
+                        {subcategory}
                       </option>
                     ))}
                   </select>
@@ -515,7 +583,9 @@ function SwipeTransactionCard({
             {categoryEmoji(item.category, item.type)}
           </span>
           <div className="transaction-item-meta">
-            <strong className="transaction-item-category">{item.category}</strong>
+            <strong className="transaction-item-category">
+              {item.subcategory ? `${item.category} / ${item.subcategory}` : item.category}
+            </strong>
             <span className="transaction-item-date">{item.transaction_date}</span>
           </div>
           <p className={`transaction-item-amount ${item.type}`}>

@@ -6,6 +6,7 @@ export type Transaction = {
   type: TransactionType
   amount: number
   category: string
+  subcategory?: string | null
   transaction_date: string
   note: string | null
   created_at: string
@@ -20,6 +21,7 @@ export type TransactionFormState = {
   type: TransactionType
   amount: string
   category: string
+  subcategory: string
   transaction_date: string
   note: string
 }

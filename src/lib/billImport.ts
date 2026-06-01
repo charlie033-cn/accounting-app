@@ -174,6 +174,7 @@ export function parseBillImportText(
       type,
       amount: amount.toFixed(2),
       category,
+      subcategory: '',
       transaction_date: date,
       note: note || '账单导入',
       sourceText: rowText,

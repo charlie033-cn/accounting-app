@@ -16,13 +16,19 @@ import {
   RECURRING_COLLECTION,
   TRANSACTION_COLLECTION,
   USER_CATEGORY_LISTS_COLLECTION,
+  defaultExpenseSubcategories,
   expenseCategories,
   incomeCategories,
   initialForm,
   todayISO,
   currentMonth,
 } from '../accounting/constants'
-import { daysInCalendarMonth, formatMoney } from '../accounting/format'
+import { formatMoney } from '../accounting/format'
+import { dynamicDailyBudget, remainingBudgetDays } from '../accounting/budgetMath'
+import {
+  buildHistoricalCategoryMigrationPreview,
+  type CategoryMigrationSuggestion,
+} from '../accounting/categoryMigration'
 import type { CloudBudgetDoc } from '../types/budget'
 import type { CloudUserCategoryListDoc } from '../types/categories'
 import type { RecurringBillingType, RecurringTemplate } from '../types/recurring'
@@ -53,6 +59,7 @@ function budgetCloudMessage(raw: string): string {
 
 const DEFAULT_EXPENSE_CATEGORIES = [...expenseCategories] as string[]
 const DEFAULT_INCOME_CATEGORIES = [...incomeCategories] as string[]
+const DEFAULT_EXPENSE_SUBCATEGORIES = { ...defaultExpenseSubcategories }
 const TRANSACTION_FETCH_LIMIT = 1000
 
 function normalizeUserCategoryNames(raw: unknown, fallback: string[]): string[] {
@@ -75,6 +82,23 @@ function normalizeUserCategoryNames(raw: unknown, fallback: string[]): string[] 
   return out.length > 0 ? out : [...fallback]
 }
 
+function normalizeExpenseSubcategoryMap(
+  raw: unknown,
+  expense: string[],
+): Record<string, string[]> {
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? raw as Record<string, unknown>
+    : {}
+  const out: Record<string, string[]> = {}
+  for (const category of expense) {
+    out[category] = normalizeUserCategoryNames(
+      source[category],
+      DEFAULT_EXPENSE_SUBCATEGORIES[category] ?? ['无法归类'],
+    )
+  }
+  return out
+}
+
 function categoryListCloudMessage(raw: string): string {
   const t = raw.trim()
   if (
@@ -94,6 +118,13 @@ function categoryListCloudMessage(raw: string): string {
 type AuthSession = {
   userId: string
   email: string
+}
+
+const REMEMBERED_AUTH_STORAGE_KEY = 'accounting-app:remembered-auth'
+
+type RememberedAuth = {
+  email: string
+  password: string
 }
 
 type CloudTransaction = Omit<Transaction, 'id'> & {
@@ -121,6 +152,7 @@ const toTransaction = (item: CloudTransaction): Transaction => ({
   type: item.type,
   amount: Number(item.amount),
   category: item.category,
+  subcategory: item.subcategory ?? null,
   transaction_date: item.transaction_date,
   note: item.note ?? null,
   created_at: item.created_at,
@@ -137,6 +169,7 @@ const toRecurringTemplate = (row: CloudRecurringRow): RecurringTemplate => ({
   amount: Number(row.amount),
   total_amount: row.total_amount == null ? null : Number(row.total_amount),
   category: row.category,
+  subcategory: row.subcategory ?? null,
   day_of_month: Number(row.day_of_month),
   start_period: row.start_period,
   start_date: row.start_date ?? null,
@@ -180,6 +213,47 @@ const getSessionFromLoginState = (loginState: unknown): AuthSession | null => {
   }
 }
 
+const loadRememberedAuth = (): RememberedAuth | null => {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  try {
+    const raw = window.localStorage.getItem(REMEMBERED_AUTH_STORAGE_KEY)
+    if (!raw) {
+      return null
+    }
+
+    const parsed = JSON.parse(raw) as Partial<RememberedAuth>
+    if (typeof parsed.email !== 'string' || typeof parsed.password !== 'string') {
+      return null
+    }
+
+    return {
+      email: parsed.email,
+      password: parsed.password,
+    }
+  } catch {
+    return null
+  }
+}
+
+const saveRememberedAuth = (next: RememberedAuth) => {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.localStorage.setItem(REMEMBERED_AUTH_STORAGE_KEY, JSON.stringify(next))
+}
+
+const clearRememberedAuth = () => {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.localStorage.removeItem(REMEMBERED_AUTH_STORAGE_KEY)
+}
+
 export type AccountingContextType = {
   isCloudBaseConfigured: boolean
   session: AuthSession | null
@@ -209,6 +283,8 @@ export type AccountingContextType = {
   setEmail: (v: string) => void
   password: string
   setPassword: (v: string) => void
+  rememberPassword: boolean
+  setRememberPassword: (v: boolean) => void
   isVerifyingSignup: boolean
   verificationEmail: string
   verificationCode: string
@@ -244,6 +320,7 @@ export type AccountingContextType = {
     amount: number
     total_amount?: number | null
     category: string
+    subcategory?: string | null
     day_of_month: number
     start_period: string
     start_date?: string
@@ -252,8 +329,16 @@ export type AccountingContextType = {
   deleteRecurringTemplate: (id: string) => Promise<void>
   setRecurringPaused: (id: string, paused: boolean) => Promise<void>
   expenseCategoryNames: string[]
+  expenseSubcategoryMap: Record<string, string[]>
   incomeCategoryNames: string[]
-  saveUserCategoryLists: (payload: { expense: string[]; income: string[] }) => Promise<void>
+  subcategoryOptions: (category: string) => string[]
+  categoryMigrationPreview: CategoryMigrationSuggestion[]
+  migrateHistoricalCategories: () => Promise<number>
+  saveUserCategoryLists: (payload: {
+    expense: string[]
+    income: string[]
+    expenseSubcategories?: Record<string, string[]>
+  }) => Promise<void>
   restoreDefaultCategoryLists: () => Promise<void>
   categoriesLoading: boolean
   categoriesSaving: boolean
@@ -278,6 +363,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
   const [authMode, setAuthMode] = useState<'sign-in' | 'sign-up'>('sign-in')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [rememberPassword, setRememberPassword] = useState(false)
   const [isVerifyingSignup, setIsVerifyingSignup] = useState(false)
   const [verificationEmail, setVerificationEmail] = useState('')
   const [verificationCode, setVerificationCode] = useState('')
@@ -300,6 +386,9 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
   const [expenseCategoryNames, setExpenseCategoryNames] = useState<string[]>(
     () => [...expenseCategories] as string[],
   )
+  const [expenseSubcategoryMap, setExpenseSubcategoryMap] = useState<Record<string, string[]>>(
+    () => normalizeExpenseSubcategoryMap(DEFAULT_EXPENSE_SUBCATEGORIES, DEFAULT_EXPENSE_CATEGORIES),
+  )
   const [incomeCategoryNames, setIncomeCategoryNames] = useState<string[]>(
     () => [...incomeCategories] as string[],
   )
@@ -309,6 +398,17 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
   const verifySignupRef = useRef<VerifySignupOtp | null>(null)
   const messageDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const budgetSuccessDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    const remembered = loadRememberedAuth()
+    if (!remembered) {
+      return
+    }
+
+    setEmail(remembered.email)
+    setPassword(remembered.password)
+    setRememberPassword(true)
+  }, [])
 
   useEffect(() => {
     if (messageDismissTimerRef.current) {
@@ -371,10 +471,16 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
     [expenseCategoryNames, incomeCategoryNames],
   )
 
+  const subcategoryOptions = useCallback(
+    (category: string) => expenseSubcategoryMap[category] ?? [],
+    [expenseSubcategoryMap],
+  )
+
   const buildEmptyForm = useCallback((): TransactionFormState => {
     return {
       ...initialForm(),
       category: expenseCategoryNames[0] ?? (expenseCategories[0] as string),
+      subcategory: '',
     }
   }, [expenseCategoryNames])
 
@@ -555,6 +661,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
         if (result.code) {
           setCategoryListsDocId(null)
           setExpenseCategoryNames([...DEFAULT_EXPENSE_CATEGORIES])
+          setExpenseSubcategoryMap(normalizeExpenseSubcategoryMap(DEFAULT_EXPENSE_SUBCATEGORIES, DEFAULT_EXPENSE_CATEGORIES))
           setIncomeCategoryNames([...DEFAULT_INCOME_CATEGORIES])
           return
         }
@@ -562,17 +669,21 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
         const row = result.data?.[0]
         if (row) {
           setCategoryListsDocId(row._id)
-          setExpenseCategoryNames(normalizeUserCategoryNames(row.expense, DEFAULT_EXPENSE_CATEGORIES))
+          const expense = normalizeUserCategoryNames(row.expense, DEFAULT_EXPENSE_CATEGORIES)
+          setExpenseCategoryNames(expense)
+          setExpenseSubcategoryMap(normalizeExpenseSubcategoryMap(row.expense_subcategories, expense))
           setIncomeCategoryNames(normalizeUserCategoryNames(row.income, DEFAULT_INCOME_CATEGORIES))
         } else {
           setCategoryListsDocId(null)
           setExpenseCategoryNames([...DEFAULT_EXPENSE_CATEGORIES])
+          setExpenseSubcategoryMap(normalizeExpenseSubcategoryMap(DEFAULT_EXPENSE_SUBCATEGORIES, DEFAULT_EXPENSE_CATEGORIES))
           setIncomeCategoryNames([...DEFAULT_INCOME_CATEGORIES])
         }
       } catch {
         if (!cancelled) {
           setCategoryListsDocId(null)
           setExpenseCategoryNames([...DEFAULT_EXPENSE_CATEGORIES])
+          setExpenseSubcategoryMap(normalizeExpenseSubcategoryMap(DEFAULT_EXPENSE_SUBCATEGORIES, DEFAULT_EXPENSE_CATEGORIES))
           setIncomeCategoryNames([...DEFAULT_INCOME_CATEGORIES])
         }
       } finally {
@@ -604,9 +715,8 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
       .reduce((sum, item) => sum + item.amount, 0)
   }, [transactions, budgetPeriod])
 
-  const budgetDays = daysInCalendarMonth(budgetPeriod)
-  const dailyBudgetReference =
-    budgetAmount != null && budgetAmount > 0 && budgetDays > 0 ? budgetAmount / budgetDays : null
+  const budgetDays = remainingBudgetDays(budgetPeriod)
+  const dailyBudgetReference = dynamicDailyBudget(budgetPeriod, budgetAmount, monthExpenseTotal)
   const todayVsDailyPercent =
     dailyBudgetReference != null && dailyBudgetReference > 0
       ? (todayExpenseTotal / dailyBudgetReference) * 100
@@ -614,8 +724,22 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
   const monthVsBudgetPercent =
     budgetAmount != null && budgetAmount > 0 ? (monthExpenseTotal / budgetAmount) * 100 : null
 
+  const categoryMigrationPreview = useMemo(
+    () =>
+      buildHistoricalCategoryMigrationPreview(
+        transactions,
+        expenseCategoryNames,
+        expenseSubcategoryMap,
+      ),
+    [expenseCategoryNames, expenseSubcategoryMap, transactions],
+  )
+
   const saveUserCategoryLists = useCallback(
-    async (payload: { expense: string[]; income: string[] }) => {
+    async (payload: {
+      expense: string[]
+      income: string[]
+      expenseSubcategories?: Record<string, string[]>
+    }) => {
       const db = cloudbaseDb
       const uid = session?.userId
       if (!db || !uid) {
@@ -624,6 +748,10 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
 
       const expense = normalizeUserCategoryNames(payload.expense, DEFAULT_EXPENSE_CATEGORIES)
       const income = normalizeUserCategoryNames(payload.income, DEFAULT_INCOME_CATEGORIES)
+      const expenseSubcategories = normalizeExpenseSubcategoryMap(
+        payload.expenseSubcategories ?? expenseSubcategoryMap,
+        expense,
+      )
       const now = new Date().toISOString()
 
       setCategoriesSaving(true)
@@ -631,6 +759,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
         if (categoryListsDocId) {
           await db.collection(USER_CATEGORY_LISTS_COLLECTION).doc(categoryListsDocId).update({
             expense,
+            expense_subcategories: expenseSubcategories,
             income,
             updated_at: now,
           })
@@ -638,6 +767,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
           const addRes = (await db.collection(USER_CATEGORY_LISTS_COLLECTION).add({
             user_id: uid,
             expense,
+            expense_subcategories: expenseSubcategories,
             income,
             created_at: now,
             updated_at: now,
@@ -651,6 +781,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
           }
         }
         setExpenseCategoryNames(expense)
+        setExpenseSubcategoryMap(expenseSubcategories)
         setIncomeCategoryNames(income)
         setMessage('分类已保存')
       } catch (e) {
@@ -659,13 +790,14 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
         setCategoriesSaving(false)
       }
     },
-    [session?.userId, categoryListsDocId],
+    [session?.userId, categoryListsDocId, expenseSubcategoryMap],
   )
 
   const restoreDefaultCategoryLists = useCallback(async () => {
     await saveUserCategoryLists({
       expense: [...DEFAULT_EXPENSE_CATEGORIES],
       income: [...DEFAULT_INCOME_CATEGORIES],
+      expenseSubcategories: DEFAULT_EXPENSE_SUBCATEGORIES,
     })
     setMessage('已恢复默认分类')
   }, [saveUserCategoryLists])
@@ -676,12 +808,18 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
       if (list.length === 0) {
         return f
       }
-      if (list.includes(f.category)) {
+      const category = list.includes(f.category) ? f.category : list[0]
+      if (f.type !== 'expense') {
+        return category === f.category ? f : { ...f, category, subcategory: '' }
+      }
+      const subcategories = subcategoryOptions(category)
+      const subcategory = !f.subcategory || subcategories.includes(f.subcategory) ? f.subcategory : ''
+      if (category === f.category && subcategory === f.subcategory) {
         return f
       }
-      return { ...f, category: list[0] }
+      return { ...f, category, subcategory }
     })
-  }, [expenseCategoryNames, incomeCategoryNames])
+  }, [expenseCategoryNames, incomeCategoryNames, subcategoryOptions])
 
   const handleAuth = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -726,6 +864,12 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
         const nextSession = getSessionFromLoginState({ user: result.data.user })
         if (!nextSession) {
           throw new Error('登录成功但未获取到用户信息')
+        }
+
+        if (rememberPassword) {
+          saveRememberedAuth({ email, password })
+        } else {
+          clearRememberedAuth()
         }
 
         setSession(nextSession)
@@ -791,10 +935,12 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
     setTransactions([])
     setCategoryListsDocId(null)
     setExpenseCategoryNames([...DEFAULT_EXPENSE_CATEGORIES])
+      setExpenseSubcategoryMap(normalizeExpenseSubcategoryMap(DEFAULT_EXPENSE_SUBCATEGORIES, DEFAULT_EXPENSE_CATEGORIES))
     setIncomeCategoryNames([...DEFAULT_INCOME_CATEGORIES])
     setForm({
       ...initialForm(),
       category: DEFAULT_EXPENSE_CATEGORIES[0],
+      subcategory: '',
     })
     setEditingId(null)
     setBudgetDocId(null)
@@ -880,13 +1026,46 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
   }
 
   const handleTypeChange = (type: TransactionType) => {
+    const category = (type === 'expense' ? expenseCategoryNames : incomeCategoryNames)[0]
     setForm((current) => ({
       ...current,
       type,
-      category:
-        (type === 'expense' ? expenseCategoryNames : incomeCategoryNames)[0] ?? current.category,
+      category: category ?? current.category,
+      subcategory: '',
     }))
   }
+
+  const migrateHistoricalCategories = useCallback(async () => {
+    const db = cloudbaseDb
+    const uid = session?.userId
+    if (!db || !uid || categoryMigrationPreview.length === 0) {
+      return 0
+    }
+    setIsLoading(true)
+    setError('')
+    setMessage('')
+    const now = new Date().toISOString()
+    try {
+      for (const item of categoryMigrationPreview) {
+        await db.collection(TRANSACTION_COLLECTION).doc(item.id).update({
+          category: item.toCategory,
+          subcategory: item.toSubcategory,
+          migrated_category_from: item.fromCategory,
+          migrated_subcategory_from: item.fromSubcategory,
+          migrated_category_at: now,
+          updated_at: now,
+        })
+      }
+      await loadTransactions(uid)
+      setMessage(`已整理 ${categoryMigrationPreview.length} 笔历史账单分类`)
+      return categoryMigrationPreview.length
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '历史分类整理失败')
+      throw e
+    } finally {
+      setIsLoading(false)
+    }
+  }, [categoryMigrationPreview, loadTransactions, session?.userId])
 
   const cancelEdit = useCallback(() => {
     setEditingId(null)
@@ -905,6 +1084,10 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
       setError('请输入大于 0 的金额')
       return
     }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(form.transaction_date)) {
+      setError('请选择日期')
+      return
+    }
 
     setIsLoading(true)
     setError('')
@@ -916,6 +1099,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
       type: form.type,
       amount,
       category: form.category,
+      subcategory: form.type === 'expense' ? form.subcategory || null : null,
       transaction_date: form.transaction_date,
       note: form.note.trim() || null,
       updated_at: now,
@@ -965,6 +1149,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
           type: draft.type,
           amount,
           category: draft.category,
+          subcategory: draft.type === 'expense' ? draft.subcategory || null : null,
           transaction_date: draft.transaction_date,
           note: draft.note.trim() || null,
         }
@@ -1024,6 +1209,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
           type: draft.type,
           amount,
           category: draft.category,
+          subcategory: draft.type === 'expense' ? draft.subcategory || null : null,
           transaction_date: draft.transaction_date,
           note: draft.note.trim() || null,
           updated_at: new Date().toISOString(),
@@ -1047,6 +1233,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
         type: item.type,
         amount: String(item.amount),
         category: item.category,
+        subcategory: item.subcategory ?? '',
         transaction_date: item.transaction_date,
         note: item.note ?? '',
       })
@@ -1085,6 +1272,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
       amount: number
       total_amount?: number | null
       category: string
+      subcategory?: string | null
       day_of_month: number
       start_period: string
       start_date?: string
@@ -1107,6 +1295,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
           amount: firstAmount,
           total_amount: totalAmount,
           category: input.category,
+          subcategory: input.subcategory ?? null,
           day_of_month: input.day_of_month,
           start_period: input.start_period,
           start_date: input.start_date ?? null,
@@ -1130,6 +1319,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
               type: 'expense',
               amount: isInstallment ? splitRecurringAmount(totalAmount ?? 0, months, index) : input.amount,
               category: input.category,
+              subcategory: input.subcategory ?? null,
               transaction_date: transactionDate,
               note: `${isInstallment ? '分期自动记账' : '固定周期记账'} · ${input.name.trim()} · 第 ${index + 1}/${months} 期`,
               source: 'recurring',
@@ -1233,6 +1423,8 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
       setEmail,
       password,
       setPassword,
+      rememberPassword,
+      setRememberPassword,
       isVerifyingSignup,
       verificationEmail,
       verificationCode,
@@ -1266,7 +1458,11 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
       deleteRecurringTemplate,
       setRecurringPaused,
       expenseCategoryNames,
+      expenseSubcategoryMap,
       incomeCategoryNames,
+      subcategoryOptions,
+      categoryMigrationPreview,
+      migrateHistoricalCategories,
       saveUserCategoryLists,
       restoreDefaultCategoryLists,
       categoriesLoading,

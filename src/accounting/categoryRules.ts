@@ -105,17 +105,17 @@ const CATEGORY_KEYWORDS: Array<{
   },
   {
     type: 'expense',
-    category: '房租',
+    category: '居住',
     keywords: ['房租', '租金', '租房', '公寓', '自如', '贝壳租房', '链家'],
   },
   {
     type: 'expense',
-    category: '水电',
+    category: '居住',
     keywords: ['水费', '电费', '燃气', '天然气', '网费', '宽带', '物业', '供暖', '取暖'],
   },
   {
     type: 'expense',
-    category: '娱乐',
+    category: '娱乐休闲',
     keywords: [
       '电影',
       '影院',
@@ -142,23 +142,43 @@ const CATEGORY_KEYWORDS: Array<{
   },
   {
     type: 'expense',
-    category: '医疗',
+    category: '医疗健康',
     keywords: ['医院', '药', '药房', '药店', '看病', '门诊', '体检', '医疗', '医保', '牙科', '口腔'],
   },
   {
     type: 'expense',
-    category: '旅游',
+    category: '娱乐休闲',
     keywords: ['旅游', '旅行', '酒店', '民宿', '携程', '飞猪', '去哪儿', '同程', '景区', '门票', '机酒'],
   },
   {
     type: 'expense',
-    category: '人情',
+    category: '人情社交',
     keywords: ['红包', '份子', '礼金', '礼物', '转账给', '亲友', '结婚', '生日'],
   },
   {
     type: 'expense',
-    category: '家居/家具',
+    category: '居住',
     keywords: ['家居', '家具', '宜家', 'IKEA', '装修', '家装', '五金', '灯具', '窗帘', '床垫'],
+  },
+  {
+    type: 'expense',
+    category: '生活服务',
+    keywords: ['话费', '流量', '快递', '物流', '洗衣', '理发', '美容', '家政', '证件'],
+  },
+  {
+    type: 'expense',
+    category: '教育成长',
+    keywords: ['课程', '培训', '书籍', '资料', '考试', '认证', '学习', '教育'],
+  },
+  {
+    type: 'expense',
+    category: '金融保险',
+    keywords: ['保险', '手续费', '利息', '贷款', '还款', '投资支出'],
+  },
+  {
+    type: 'expense',
+    category: '家庭',
+    keywords: ['育儿', '儿童', '老人', '赡养', '家庭共同'],
   },
   {
     type: 'income',

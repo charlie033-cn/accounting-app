@@ -6,11 +6,12 @@ const csvEscape = (value: string | number | null) => {
 }
 
 export const downloadTransactionsCsv = (transactions: Transaction[]) => {
-  const headers = ['日期', '类型', '分类', '金额', '备注', '创建时间']
+  const headers = ['日期', '类型', '分类', '二级分类', '金额', '备注', '创建时间']
   const rows = transactions.map((item) => [
     item.transaction_date,
     item.type === 'expense' ? '支出' : '收入',
     item.category,
+    item.subcategory ?? '',
     item.amount.toFixed(2),
     item.note,
     item.created_at,

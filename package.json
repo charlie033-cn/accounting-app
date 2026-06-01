@@ -4,23 +4,29 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host 127.0.0.1 --port 5173 --strictPort --force",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "check": "npm run lint && npm run build",
+    "cap:sync": "npm run build && npx cap sync",
+    "ios:open": "npm run cap:sync && npx cap open ios",
     "deploy:tcb": "npm run build && npx -p @cloudbase/cli@latest tcb hosting deploy ./dist -e test-d3g2xaivpb160ef4f",
     "deploy:fn-receipt": "npx -p @cloudbase/cli@latest tcb fn deploy parseReceiptTokenhub -e test-d3g2xaivpb160ef4f --yes",
+    "deploy:fn-voice": "npx -p @cloudbase/cli@latest tcb fn deploy parseVoiceTransactionTokenhub -e test-d3g2xaivpb160ef4f --yes",
     "deploy:fn-classify": "npx -p @cloudbase/cli@latest tcb fn deploy classifyTransactionsTokenhub -e test-d3g2xaivpb160ef4f --yes",
     "deploy:fn-report": "npx -p @cloudbase/cli@latest tcb fn deploy generateSpendingReportTokenhub -e test-d3g2xaivpb160ef4f --yes"
   },
   "dependencies": {
+    "@capacitor/core": "^8.3.4",
+    "@capacitor/ios": "^8.3.4",
     "@cloudbase/js-sdk": "^2.28.5",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-router-dom": "^7.15.1"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.3.4",
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",
