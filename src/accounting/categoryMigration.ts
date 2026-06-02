@@ -62,6 +62,7 @@ const SUBCATEGORY_RULES: Array<{
   { category: '娱乐休闲', subcategory: '运动健身', keywords: ['运动', '健身'] },
   { category: '娱乐休闲', subcategory: '旅行度假', keywords: ['旅游', '旅行', '酒店', '门票', '景区'] },
   { category: '娱乐休闲', subcategory: '书影音', keywords: ['书', '音乐', '视频会员', '会员'] },
+  { category: '娱乐休闲', subcategory: '洗浴按摩', keywords: ['洗浴', '按摩', '足疗', 'SPA', 'spa', '推拿'] },
   { category: '医疗健康', subcategory: '药品', keywords: ['药', '药房', '药店'] },
   { category: '医疗健康', subcategory: '门诊急诊', keywords: ['医院', '门诊', '急诊', '看病'] },
   { category: '医疗健康', subcategory: '体检', keywords: ['体检'] },
@@ -69,6 +70,10 @@ const SUBCATEGORY_RULES: Array<{
   { category: '人情社交', subcategory: '红包礼金', keywords: ['红包', '礼金', '份子'] },
   { category: '人情社交', subcategory: '礼物', keywords: ['礼物'] },
   { category: '人情社交', subcategory: '请客', keywords: ['请客'] },
+  { category: '家庭', subcategory: '育儿用品', keywords: ['育儿', '婴儿', '宝宝', '奶粉', '尿不湿'] },
+  { category: '家庭', subcategory: '儿童服务', keywords: ['儿童', '托育', '早教', '兴趣班', '校外'] },
+  { category: '家庭', subcategory: '老人赡养', keywords: ['老人', '父母', '赡养', '孝敬'] },
+  { category: '家庭', subcategory: '家庭共同支出', keywords: ['家庭共同', '家用', '全家', '共同支出'] },
 ]
 
 function includesAny(text: string, keywords: string[]) {
@@ -111,7 +116,15 @@ export function buildHistoricalCategoryMigrationPreview(
       if (!toCategory || !expenseCategories.includes(toCategory)) {
         return null
       }
-      const toSubcategory = legacy?.subcategory ?? inferSubcategory(text, toCategory, subcategoryMap)
+      const toCategoryOptions = subcategoryMap[toCategory] ?? []
+      const hasValidCurrentSubcategory = (
+        item.category === toCategory &&
+        Boolean(item.subcategory) &&
+        toCategoryOptions.includes(item.subcategory ?? '')
+      )
+      const toSubcategory = hasValidCurrentSubcategory
+        ? (item.subcategory ?? '')
+        : (legacy?.subcategory ?? inferSubcategory(text, toCategory, subcategoryMap))
       if (item.category === toCategory && item.subcategory === toSubcategory) {
         return null
       }

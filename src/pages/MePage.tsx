@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { useRef, useState, type ChangeEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { useAccounting } from '../context/AccountingContext'
@@ -25,8 +25,6 @@ export function MePage() {
     transactions,
     categoryOptions,
     subcategoryOptions,
-    categoryMigrationPreview,
-    migrateHistoricalCategories,
     saveTransactionsFromDrafts,
     formatMoney,
     isLoading,
@@ -49,14 +47,6 @@ export function MePage() {
   ) % 360
   const selectedImportCount = importDrafts.filter((item) => item.selected).length
   const duplicateImportCount = importDrafts.filter((item) => item.duplicate).length
-  const migrationGroups = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const item of categoryMigrationPreview) {
-      const key = `${item.fromCategory}${item.fromSubcategory ? ` / ${item.fromSubcategory}` : ''} -> ${item.toCategory} / ${item.toSubcategory}`
-      map.set(key, (map.get(key) ?? 0) + 1)
-    }
-    return Array.from(map.entries()).map(([label, count]) => ({ label, count })).slice(0, 8)
-  }, [categoryMigrationPreview])
 
   const markDuplicates = (drafts: BillImportDraft[]) => {
     const existingKeys = new Set(
@@ -201,45 +191,6 @@ export function MePage() {
             分类管理
           </Link>
         </div>
-      </section>
-
-      <section className="panel me-panel me-migration-panel">
-        <div className="panel-header">
-          <div>
-            <p className="eyebrow">分类整理</p>
-            <h2>历史分类迁移</h2>
-          </div>
-        </div>
-        <p className="muted me-import-hint">
-          将旧分类整理到新的一级/二级分类体系。确认前可先看下方预览。
-        </p>
-        {categoryMigrationPreview.length > 0 ? (
-          <>
-            <ul className="category-migration-preview">
-              {migrationGroups.map((item) => (
-                <li key={item.label}>
-                  <span>{item.label}</span>
-                  <strong>{item.count} 笔</strong>
-                </li>
-              ))}
-            </ul>
-            <button
-              type="button"
-              className="me-panel-btn me-panel-btn--secondary"
-              disabled={isLoading}
-              onClick={() => {
-                if (!window.confirm(`确定整理 ${categoryMigrationPreview.length} 笔历史账单分类吗？`)) {
-                  return
-                }
-                void migrateHistoricalCategories()
-              }}
-            >
-              整理 {categoryMigrationPreview.length} 笔历史分类
-            </button>
-          </>
-        ) : (
-          <p className="muted me-import-hint">暂无需要整理的历史分类。</p>
-        )}
       </section>
 
       <button

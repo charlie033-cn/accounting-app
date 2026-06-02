@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type PointerEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { currentMonth, currentYear, todayISO } from '../accounting/constants'
@@ -15,6 +15,72 @@ type ExpenseChartItem = {
   label: string
   amount: number
   active: boolean
+}
+
+type CategoryReportItem = {
+  category: string
+  amount: number
+  count: number
+  percent: number
+  color: string
+  rows: Transaction[]
+}
+
+const REPORT_FALLBACK_COLORS = [
+  '#008ed9',
+  '#40c9e4',
+  '#e85d75',
+  '#e8892e',
+  '#e35d6a',
+  '#62b765',
+  '#4b8130',
+  '#78a800',
+  '#ff9943',
+  '#3568c2',
+  '#88a7fc',
+  '#029dd0',
+  '#7ad1e8',
+  '#d8b400',
+  '#d66fa3',
+]
+
+const REPORT_CATEGORY_COLORS: Record<string, string> = {
+  餐饮: '#ff9943',
+  交通: '#029dd0',
+  购物: '#e85d75',
+  房租: '#3568c2',
+  水电: '#40c9e4',
+  娱乐: '#f27f6d',
+  医疗: '#008ed9',
+  旅游: '#62b765',
+  人情: '#e35d6a',
+  '家居/家具': '#78a800',
+  其他: '#88a7fc',
+}
+
+const PIE_RADIUS = 78
+const PIE_CIRCUMFERENCE = 2 * Math.PI * PIE_RADIUS
+
+function fallbackReportColor(category: string) {
+  const hash = Array.from(category).reduce((sum, char) => sum + char.charCodeAt(0), 0)
+  return REPORT_FALLBACK_COLORS[hash % REPORT_FALLBACK_COLORS.length]
+}
+
+function reportCategoryColor(category: string) {
+  return REPORT_CATEGORY_COLORS[category] ?? fallbackReportColor(category)
+}
+
+function formatPeriodControlLabel(timeView: TimeView, day: string, month: string, year: string) {
+  if (timeView === 'day') {
+    if (!day || day.length < 10) {
+      return '日期'
+    }
+    return day.slice(5)
+  }
+  if (timeView === 'month') {
+    return month || '月份'
+  }
+  return year || '年份'
 }
 
 export function TransactionsPage() {
@@ -34,6 +100,8 @@ export function TransactionsPage() {
   const [filterYear, setFilterYear] = useState(currentYear)
   const [selectedCategory, setSelectedCategory] = useState('all')
   const [selectedSubcategory, setSelectedSubcategory] = useState('all')
+  const [selectedReportCategory, setSelectedReportCategory] = useState<string | null>(null)
+  const [detailCategory, setDetailCategory] = useState<string | null>(null)
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [swipedId, setSwipedId] = useState<string | null>(null)
   const [editingItem, setEditingItem] = useState<Transaction | null>(null)
@@ -63,14 +131,41 @@ export function TransactionsPage() {
 
   const firstSubcategory = (category: string) => subcategoryOptions(category)[0] ?? ''
 
+  const periodLabel =
+    timeView === 'day'
+      ? filterDay
+      : timeView === 'month'
+        ? filterMonth
+        : filterYear.length === 4
+          ? `${filterYear} 年`
+          : '选择年份'
+  const periodControlLabel = formatPeriodControlLabel(timeView, filterDay, filterMonth, filterYear)
+
+  const periodExpenseRows = useMemo(() => {
+    return transactions.filter((item) => {
+      if (item.type !== 'expense') {
+        return false
+      }
+      if (timeView === 'day') {
+        return item.transaction_date === filterDay
+      }
+      if (timeView === 'month') {
+        return item.transaction_date.startsWith(filterMonth)
+      }
+      return filterYear.length === 4 && item.transaction_date.startsWith(filterYear)
+    })
+  }, [transactions, timeView, filterDay, filterMonth, filterYear])
+
+  const filteredPeriodExpenseRows = useMemo(() => {
+    return periodExpenseRows.filter((item) => {
+      const matchCategory = selectedCategory === 'all' || item.category === selectedCategory
+      const matchSubcategory = selectedSubcategory === 'all' || item.subcategory === selectedSubcategory
+      return matchCategory && matchSubcategory
+    })
+  }, [periodExpenseRows, selectedCategory, selectedSubcategory])
+
   const expenseChartItems = useMemo<ExpenseChartItem[]>(() => {
-    const categoryOk = (category: string) =>
-      selectedCategory === 'all' || category === selectedCategory
-    const subcategoryOk = (subcategory?: string | null) =>
-      selectedSubcategory === 'all' || subcategory === selectedSubcategory
-    const expenseRows = transactions.filter(
-      (item) => item.type === 'expense' && categoryOk(item.category) && subcategoryOk(item.subcategory),
-    )
+    const expenseRows = filteredPeriodExpenseRows
 
     if (timeView === 'year') {
       const year = filterYear.length === 4 ? filterYear : currentYear()
@@ -104,7 +199,7 @@ export function TransactionsPage() {
         active: timeView === 'day' ? filterDay === date : todayISO() === date,
       }
     })
-  }, [transactions, timeView, filterYear, chartPeriod, selectedCategory, selectedSubcategory, filterDay])
+  }, [filteredPeriodExpenseRows, timeView, filterYear, chartPeriod, filterDay])
 
   const chartMaxExpense = useMemo(
     () => Math.max(...expenseChartItems.map((item) => item.amount), 0),
@@ -123,28 +218,88 @@ export function TransactionsPage() {
     return expenseChartItems.find((item) => item.key === filterDay)?.amount ?? 0
   }, [timeView, chartTotalExpense, expenseChartItems, filterDay])
 
-  const filteredTransactions = useMemo(() => {
-    return transactions.filter((item) => {
-      const dateOk =
-        timeView === 'day'
-          ? item.transaction_date === filterDay
-          : timeView === 'month'
-            ? item.transaction_date.startsWith(filterMonth)
-            : filterYear.length === 4 && item.transaction_date.startsWith(filterYear)
-      const matchCategory = selectedCategory === 'all' || item.category === selectedCategory
-      const matchSubcategory = selectedSubcategory === 'all' || item.subcategory === selectedSubcategory
-      return dateOk && matchCategory && matchSubcategory
+  const categoryStats = useMemo<CategoryReportItem[]>(() => {
+    const total = filteredPeriodExpenseRows.reduce((sum, item) => sum + item.amount, 0)
+    const categoryMap = new Map<string, { amount: number; count: number; rows: Transaction[] }>()
+    filteredPeriodExpenseRows.forEach((item) => {
+      const current = categoryMap.get(item.category) ?? { amount: 0, count: 0, rows: [] }
+      current.amount += item.amount
+      current.count += 1
+      current.rows.push(item)
+      categoryMap.set(item.category, current)
     })
-  }, [transactions, timeView, filterDay, filterMonth, filterYear, selectedCategory, selectedSubcategory])
+    return Array.from(categoryMap.entries())
+      .map(([category, value]) => ({
+        category,
+        amount: value.amount,
+        count: value.count,
+        percent: total > 0 ? (value.amount / total) * 100 : 0,
+        color: reportCategoryColor(category),
+        rows: value.rows.sort((a, b) => (a.transaction_date < b.transaction_date ? 1 : -1)),
+      }))
+      .sort((a, b) => b.amount - a.amount)
+  }, [filteredPeriodExpenseRows])
 
-  const rangeLabel =
-    timeView === 'day'
-      ? filterDay
-      : timeView === 'month'
-        ? filterMonth
-        : filterYear.length === 4
-          ? `${filterYear} 年`
-          : '选择年份'
+  const totalExpense = useMemo(
+    () => categoryStats.reduce((sum, item) => sum + item.amount, 0),
+    [categoryStats],
+  )
+  const totalCount = useMemo(
+    () => categoryStats.reduce((sum, item) => sum + item.count, 0),
+    [categoryStats],
+  )
+
+  const filteredTransactions = filteredPeriodExpenseRows
+  const selectedReportItem = selectedReportCategory
+    ? categoryStats.find((item) => item.category === selectedReportCategory) ?? null
+    : null
+  const selectedPieLabel = useMemo(() => {
+    if (!selectedReportItem) {
+      return null
+    }
+    let percentOffset = 0
+    for (const item of categoryStats) {
+      const middlePercent = percentOffset + item.percent / 2
+      percentOffset += item.percent
+      if (item.category !== selectedReportItem.category) {
+        continue
+      }
+      const angle = (middlePercent / 100) * 360 - 90
+      const radians = (angle * Math.PI) / 180
+      const x = Math.min(88, Math.max(12, 50 + Math.cos(radians) * 45))
+      const y = Math.min(88, Math.max(12, 50 + Math.sin(radians) * 45))
+      return {
+        item,
+        style: {
+          '--report-label-x': `${x}%`,
+          '--report-label-y': `${y}%`,
+          '--report-label-color': item.color,
+        } as CSSProperties,
+      }
+    }
+    return null
+  }, [categoryStats, selectedReportItem])
+  const detailItem = detailCategory
+    ? categoryStats.find((item) => item.category === detailCategory) ?? null
+    : null
+
+  useEffect(() => {
+    if (!selectedReportCategory) {
+      return
+    }
+    if (!categoryStats.some((item) => item.category === selectedReportCategory)) {
+      setSelectedReportCategory(null)
+    }
+  }, [categoryStats, selectedReportCategory])
+
+  useEffect(() => {
+    if (!detailCategory) {
+      return
+    }
+    if (!categoryStats.some((item) => item.category === detailCategory)) {
+      setDetailCategory(null)
+    }
+  }, [categoryStats, detailCategory])
 
   return (
     <div className="tab-page transactions-tab-page">
@@ -163,22 +318,7 @@ export function TransactionsPage() {
         </Link>
       </section>
 
-      <section className="panel ledger-list">
-        <div className="panel-header">
-          <div>
-            <p className="eyebrow">账单明细</p>
-            <h2>{rangeLabel}</h2>
-          </div>
-          <Link className="secondary-button transactions-report-link" to="/transactions/report">
-            <span className="transactions-report-icon" aria-hidden>
-              <i />
-              <i />
-              <i />
-            </span>
-            报表
-          </Link>
-        </div>
-
+      <section className="transactions-global-filters">
         <div className="time-view-tabs segmented time-view-segmented">
           <button
             type="button"
@@ -204,28 +344,29 @@ export function TransactionsPage() {
         </div>
 
         <div className="transactions-filters">
-          <div className="transactions-time-filter-row">
-            {timeView === 'day' && (
-              <label aria-label="日期">
+          <div className="transactions-filter-inline-row">
+            <label className="transactions-date-filter" aria-label={timeView === 'day' ? '日期' : timeView === 'month' ? '月份' : '年份'}>
+              <span className="transactions-date-filter-text">{periodControlLabel}</span>
+              <span className="transactions-date-filter-arrow" aria-hidden>▾</span>
+              {timeView === 'day' && (
                 <input
+                  className="transactions-date-filter-input"
                   type="date"
                   value={filterDay}
                   onChange={(event) => setFilterDay(event.target.value)}
                 />
-              </label>
-            )}
-            {timeView === 'month' && (
-              <label aria-label="月份">
+              )}
+              {timeView === 'month' && (
                 <input
+                  className="transactions-date-filter-input"
                   type="month"
                   value={filterMonth}
                   onChange={(event) => setFilterMonth(event.target.value)}
                 />
-              </label>
-            )}
-            {timeView === 'year' && (
-              <label aria-label="年份">
+              )}
+              {timeView === 'year' && (
                 <input
+                  className="transactions-date-filter-input"
                   type="number"
                   inputMode="numeric"
                   min={2000}
@@ -233,12 +374,11 @@ export function TransactionsPage() {
                   value={filterYear}
                   onChange={(event) => setFilterYear(event.target.value.slice(0, 4))}
                 />
-              </label>
-            )}
-          </div>
-          <div className="transactions-category-filter-row">
+              )}
+            </label>
             <label aria-label="分类">
               <select
+                className="transactions-compact-select"
                 value={selectedCategory}
                 onChange={(event) => {
                   setSelectedCategory(event.target.value)
@@ -255,6 +395,7 @@ export function TransactionsPage() {
             </label>
             <label aria-label="二级分类">
               <select
+                className="transactions-compact-select"
                 value={selectedSubcategory}
                 onChange={(event) => setSelectedSubcategory(event.target.value)}
                 disabled={selectedCategory === 'all'}
@@ -267,6 +408,15 @@ export function TransactionsPage() {
                 ))}
               </select>
             </label>
+          </div>
+        </div>
+      </section>
+
+      <section className="panel transactions-panel">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">消费趋势</p>
+            <h2>{periodLabel}</h2>
           </div>
         </div>
 
@@ -311,12 +461,126 @@ export function TransactionsPage() {
           </div>
         </section>
 
-        <p className="muted filter-hint">
-          筛选作用于当前「{timeView === 'day' ? '日' : timeView === 'month' ? '月' : '年'}」范围内的流水。
-        </p>
+      </section>
 
+      <section className="panel transactions-panel">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">支出分类</p>
+            <h2>{periodLabel}</h2>
+          </div>
+        </div>
+        <section className="report-chart-card" aria-label={`${periodLabel} 分类支出占比`}>
+          <div className="report-pie-wrap">
+            <div className="report-pie">
+              <svg className="report-pie-svg" viewBox="0 0 200 200" role="img" aria-label="分类支出占比饼图">
+                <circle className="report-pie-track" cx="100" cy="100" r={PIE_RADIUS} />
+                {(() => {
+                  let offset = 0
+                  return categoryStats.map((item) => {
+                    const dash = (item.percent / 100) * PIE_CIRCUMFERENCE
+                    const strokeDashoffset = -offset
+                    offset += dash
+                    return (
+                      <circle
+                        key={item.category}
+                        className={`report-pie-segment${
+                          selectedReportCategory === item.category ? ' active' : ''
+                        }`}
+                        cx="100"
+                        cy="100"
+                        r={PIE_RADIUS}
+                        stroke={item.color}
+                        strokeDasharray={`${dash} ${PIE_CIRCUMFERENCE - dash}`}
+                        strokeDashoffset={strokeDashoffset}
+                        onClick={() => setSelectedReportCategory(item.category)}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`${item.category} ${item.percent.toFixed(0)}%`}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            setSelectedReportCategory(item.category)
+                          }
+                        }}
+                      />
+                    )
+                  })
+                })()}
+              </svg>
+              <div className="report-pie-center">
+                <span>总支出</span>
+                <strong>{formatMoney(totalExpense)}</strong>
+              </div>
+                {selectedPieLabel ? (
+                  <div className="report-pie-floating-label" style={selectedPieLabel.style}>
+                    <span>{selectedPieLabel.item.category}</span>
+                    <strong>{selectedPieLabel.item.percent.toFixed(0)}%</strong>
+                    <em>{formatMoney(selectedPieLabel.item.amount)}</em>
+                  </div>
+                ) : null}
+            </div>
+          </div>
+          <div className="report-chart-summary">
+            <span>{periodLabel}</span>
+            <strong>{totalCount} 笔支出</strong>
+          </div>
+        </section>
+
+        {categoryStats.length === 0 ? (
+          <div className="empty-state">
+            <h3>暂无分类数据</h3>
+            <p>当前周期没有支出记录。</p>
+          </div>
+        ) : (
+          <ul className="report-category-list" aria-label="分类支出统计">
+            {categoryStats.map((item) => (
+              <li
+                className={`report-category-item${
+                  selectedReportCategory === item.category ? ' active' : ''
+                }`}
+                key={item.category}
+                onClick={() => {
+                  setSelectedReportCategory(item.category)
+                  setDetailCategory(item.category)
+                }}
+              >
+                <span className="report-category-emoji" aria-hidden>
+                  {categoryEmoji(item.category, 'expense')}
+                </span>
+                <div className="report-category-main">
+                  <div className="report-category-head">
+                    <strong>{item.category}</strong>
+                    <span>{item.percent.toFixed(0)}%</span>
+                  </div>
+                  <div className="report-category-track" aria-hidden>
+                    <span
+                      className="report-category-fill"
+                      style={{
+                        width: `${Math.max(4, item.percent)}%`,
+                        background: item.color,
+                      }}
+                    />
+                  </div>
+                </div>
+                <div className="report-category-side">
+                  <strong>{formatMoney(item.amount)}</strong>
+                  <span>{item.count} 笔</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="panel ledger-list transactions-panel">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">消费明细</p>
+            <h2>{periodLabel}</h2>
+          </div>
+        </div>
         {isLoading && <p className="muted">同步中...</p>}
-
         <div className="transaction-list">
           {filteredTransactions.length === 0 ? (
             <div className="empty-state">
@@ -354,6 +618,60 @@ export function TransactionsPage() {
           )}
         </div>
       </section>
+      {detailItem && createPortal(
+        <div className="ledger-receipt-sheet-layer" role="presentation">
+          <button
+            type="button"
+            className="ledger-receipt-sheet-backdrop"
+            aria-label="关闭分类支出明细"
+            onClick={() => setDetailCategory(null)}
+          />
+          <section
+            className="ledger-receipt-sheet report-detail-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="transactions-report-detail-title"
+          >
+            <div className="ledger-receipt-review-head">
+              <h3 id="transactions-report-detail-title">{detailItem.category}</h3>
+              <button
+                type="button"
+                className="ledger-receipt-sheet-close"
+                aria-label="关闭分类支出明细"
+                onClick={() => setDetailCategory(null)}
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="ledger-receipt-review-list">
+              <div className="report-category-details">
+                {detailItem.rows.map((row) => (
+                  <article className="transaction-item report-detail-transaction-item" key={row.id}>
+                    <div className="transaction-item-main">
+                      <span className="transaction-item-emoji" aria-hidden>
+                        {categoryEmoji(row.category, row.type)}
+                      </span>
+                      <div className="transaction-item-meta">
+                        <strong className="transaction-item-category">
+                          {row.subcategory ? `${row.category} / ${row.subcategory}` : row.category}
+                        </strong>
+                        <span className="transaction-item-date">{row.transaction_date}</span>
+                      </div>
+                      <p className={`transaction-item-amount ${row.type}`}>
+                        {row.type === 'expense' ? '-' : '+'}
+                        {formatMoney(row.amount)}
+                      </p>
+                      {row.note ? <p className="transaction-item-note">{row.note}</p> : null}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          </section>
+        </div>,
+        document.body,
+      )}
       {editingItem && createPortal(
         <div className="ledger-receipt-sheet-layer" role="presentation">
           <button

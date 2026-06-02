@@ -138,6 +138,12 @@ const CATEGORY_KEYWORDS: Array<{
       '网易云音乐',
       'QQ音乐',
       'Spotify',
+      '洗浴',
+      '按摩',
+      '足疗',
+      'spa',
+      'SPA',
+      '推拿',
     ],
   },
   {

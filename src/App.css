@@ -1156,6 +1156,27 @@ textarea:focus {
   margin-bottom: var(--space-4);
 }
 
+.transactions-global-filters {
+  position: sticky;
+  top: 0;
+  z-index: 18;
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
+}
+
+.transactions-global-filters .transactions-filters {
+  margin-bottom: 0;
+}
+
+.transactions-global-filters .time-view-segmented {
+  margin-bottom: 0;
+}
+
 .transactions-time-filter-row,
 .transactions-category-filter-row {
   display: grid;
@@ -1167,8 +1188,73 @@ textarea:focus {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.transactions-filter-inline-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 0.78fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-2);
+}
+
+.transactions-panel {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.transactions-panel .panel-header {
+  margin-bottom: 0;
+}
+
 .transactions-filters label {
   min-width: 0;
+}
+
+.transactions-date-filter {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: var(--control-height-compact);
+  height: var(--control-height-compact);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: #fff;
+  color: var(--text);
+  gap: var(--space-1);
+}
+
+.transactions-date-filter-text {
+  overflow: hidden;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  line-height: var(--leading-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transactions-date-filter-arrow {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.transactions-date-filter-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: inherit;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.transactions-compact-select {
+  min-height: var(--control-height-compact);
+  height: var(--control-height-compact);
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-tight);
 }
 
 .transaction-list {
@@ -1742,11 +1828,11 @@ textarea:focus {
 .transactions-chart {
   display: grid;
   gap: var(--space-4);
-  margin: 0 0 var(--space-4);
+  margin: 0;
   padding: var(--space-4);
-  border: 1px solid rgba(22, 119, 255, 0.12);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: linear-gradient(180deg, rgba(236, 246, 255, 0.9), rgba(255, 255, 255, 0.96));
+  background: var(--panel-subtle);
 }
 
 .transactions-report-link {
@@ -2627,11 +2713,11 @@ textarea:focus {
   display: grid;
   justify-items: center;
   gap: var(--space-3);
-  margin-top: var(--space-1);
+  margin: 0;
   padding: var(--space-5) var(--space-4);
-  border: 1px solid rgba(22, 119, 255, 0.12);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: linear-gradient(180deg, rgba(236, 246, 255, 0.9), rgba(255, 255, 255, 0.98));
+  background: var(--panel-subtle);
 }
 
 .report-pie-wrap {
@@ -3519,6 +3605,11 @@ p.me-import-error {
   gap: var(--space-2);
 }
 
+.category-manager-item {
+  display: grid;
+  gap: var(--space-2);
+}
+
 .category-manager-swipe-row {
   list-style: none;
 }
@@ -3582,6 +3673,7 @@ p.me-import-error {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  flex-shrink: 0;
 }
 
 .category-manager-drag-handle {
@@ -3671,6 +3763,21 @@ body.category-dragging {
   background: #fff;
 }
 
+.category-subcategory-panel--inline {
+  margin-top: 0;
+}
+
+.category-subcategory-head {
+  display: grid;
+  gap: 2px;
+  margin-bottom: var(--space-3);
+}
+
+.category-subcategory-head .eyebrow,
+.category-subcategory-head h3 {
+  margin: 0;
+}
+
 .category-subcategory-add {
   grid-template-columns: minmax(0, 1fr) auto;
   margin-bottom: var(--space-3);
@@ -3686,7 +3793,7 @@ body.category-dragging {
 
 .category-subcategory-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-2);
 }
