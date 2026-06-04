@@ -47,6 +47,10 @@ export function MePage() {
   ) % 360
   const selectedImportCount = importDrafts.filter((item) => item.selected).length
   const duplicateImportCount = importDrafts.filter((item) => item.duplicate).length
+  const expenseSubcategoryMap = () => {
+    const categories = categoryOptions('expense')
+    return Object.fromEntries(categories.map((category) => [category, subcategoryOptions(category)]))
+  }
 
   const markDuplicates = (drafts: BillImportDraft[]) => {
     const existingKeys = new Set(
@@ -63,6 +67,7 @@ export function MePage() {
   }
 
   const refineImportCategories = async (drafts: BillImportDraft[]) => {
+    const subcategoryMap = expenseSubcategoryMap()
     const candidates = drafts
       .filter((draft) => draft.category === '其他')
       .slice(0, 30)
@@ -72,6 +77,7 @@ export function MePage() {
         amount: draft.amount,
         text: `${draft.note} ${draft.sourceText}`.trim(),
         categories: categoryOptions(draft.type),
+        subcategoryMap: draft.type === 'expense' ? subcategoryMap : undefined,
       }))
       .filter((item) => item.categories.length > 0)
     if (candidates.length === 0) {
@@ -80,9 +86,18 @@ export function MePage() {
     try {
       const classified = await classifyTransactionsWithTokenhub(candidates)
       return drafts.map((draft) => {
-        const category = classified[draft.id]
-        return category && categoryOptions(draft.type).includes(category)
-          ? { ...draft, category, subcategory: draft.type === 'expense' ? (subcategoryOptions(category)[0] ?? '') : '' }
+        const result = classified[draft.id]
+        return result && categoryOptions(draft.type).includes(result.category)
+          ? {
+              ...draft,
+              category: result.category,
+              subcategory:
+                draft.type === 'expense'
+                  ? (result.subcategory && subcategoryOptions(result.category).includes(result.subcategory)
+                      ? result.subcategory
+                      : (subcategoryOptions(result.category)[0] ?? ''))
+                  : '',
+            }
           : draft
       })
     } catch {

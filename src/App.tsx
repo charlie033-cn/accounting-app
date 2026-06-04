@@ -10,7 +10,9 @@ import { CategoryManagePage } from './pages/CategoryManagePage'
 import { MePage } from './pages/MePage'
 import { MorePage } from './pages/MorePage'
 import { MonthlyReportPage } from './pages/MonthlyReportPage'
+import { RecurringPage } from './pages/RecurringPage'
 import { ReportPage } from './pages/ReportPage'
+import { StoredValueCardsPage } from './pages/StoredValueCardsPage'
 import { TransactionsPage } from './pages/TransactionsPage'
 
 function SetupShell() {
@@ -63,6 +65,8 @@ function AppRoutes() {
           <Route path="more" element={<MorePage />} />
           <Route path="me" element={<MePage />} />
         </Route>
+        <Route path="more/recurring" element={<RecurringPage />} />
+        <Route path="more/stored-value-cards" element={<StoredValueCardsPage />} />
         <Route path="me/budget" element={<BudgetPage />} />
         <Route path="me/categories" element={<CategoryManagePage />} />
         <Route path="more/monthly-report" element={<Navigate to="/transactions/monthly-report" replace />} />

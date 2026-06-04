@@ -23,7 +23,22 @@ function localDateISO(offsetDays = 0): string {
   return `${year}-${month}-${day}`
 }
 
-function normalizeDraft(raw: VoiceTransactionDraft, categories: string[]): VoiceTransactionDraft | null {
+function normalizeCategoryTree(categories: string[], subcategoryMap?: Record<string, string[]>) {
+  return Object.fromEntries(
+    categories.map((category) => [
+      category,
+      Array.isArray(subcategoryMap?.[category])
+        ? subcategoryMap[category].map((item) => item.trim()).filter(Boolean)
+        : [],
+    ]),
+  )
+}
+
+function normalizeDraft(
+  raw: VoiceTransactionDraft,
+  categories: string[],
+  categoryTree: Record<string, string[]>,
+): VoiceTransactionDraft | null {
   const amount = String(raw.amount ?? '').trim()
   if (!amount || !Number.isFinite(Number(amount)) || Number(amount) <= 0) {
     return null
@@ -33,11 +48,16 @@ function normalizeDraft(raw: VoiceTransactionDraft, categories: string[]): Voice
     return null
   }
   const category = categories.includes(raw.category) ? raw.category : categories[0] || '其他'
+  const subcategoryOptions = categoryTree[category] ?? []
+  const subcategory =
+    typeof raw.subcategory === 'string' && subcategoryOptions.includes(raw.subcategory.trim())
+      ? raw.subcategory.trim()
+      : (subcategoryOptions[0] ?? '')
   return {
     type: 'expense',
     amount,
     category,
-    subcategory: String(raw.subcategory ?? '').trim(),
+    subcategory,
     transaction_date: date,
     note: String(raw.note ?? '').trim(),
   }
@@ -46,6 +66,7 @@ function normalizeDraft(raw: VoiceTransactionDraft, categories: string[]): Voice
 export async function parseVoiceTransactionsWithTokenhub(input: {
   text: string
   categories: string[]
+  subcategoryMap?: Record<string, string[]>
 }): Promise<VoiceTransactionDraft[]> {
   if (!cloudbaseApp) {
     return []
@@ -55,12 +76,14 @@ export async function parseVoiceTransactionsWithTokenhub(input: {
   if (!text || categories.length === 0) {
     return []
   }
+  const categoryTree = normalizeCategoryTree(categories, input.subcategoryMap)
 
   const { result } = await cloudbaseApp.callFunction({
     name: PARSE_VOICE_TRANSACTION_CLOUD_FUNCTION,
     data: {
       text,
       categories,
+      categoryTree,
       currentDate: localDateISO(),
       yesterdayDate: localDateISO(-1),
       tomorrowDate: localDateISO(1),
@@ -80,7 +103,7 @@ export async function parseVoiceTransactionsWithTokenhub(input: {
   }
   const rawDrafts = Array.isArray(r.drafts) ? r.drafts : r.draft ? [r.draft] : []
   return rawDrafts
-    .map((draft) => normalizeDraft(draft, categories))
+    .map((draft) => normalizeDraft(draft, categories, categoryTree))
     .filter((draft): draft is VoiceTransactionDraft => Boolean(draft))
     .slice(0, 10)
 }

@@ -8,7 +8,7 @@ const DEFAULT_MODEL = 'deepseek-v3.1-terminus'
 
 const SYSTEM_PROMPT = `你是记账 App 的语音记账解析助手。把用户口语化中文记账文本解析成一条或多条支出账单草稿。
 必须只输出 JSON 对象，不要 markdown 代码围栏，不要解释。
-输出格式必须为：{"drafts":[{"type":"expense","amount":"28","category":"餐饮","transaction_date":"YYYY-MM-DD","note":"午饭"}]}。
+输出格式必须为：{"drafts":[{"type":"expense","amount":"28","category":"餐饮","subcategory":"正餐","transaction_date":"YYYY-MM-DD","note":"午饭"}]}。
 规则：
 - 这个 App 只记录支出，type 必须是 "expense"。
 - 如果用户一句话里包含多笔独立消费（例如“早餐10，午饭28，咖啡19”），必须拆成多条 drafts。
@@ -16,6 +16,7 @@ const SYSTEM_PROMPT = `你是记账 App 的语音记账解析助手。把用户�
 - amount 必须是正数，字符串格式，不要包含币种符号。
 - transaction_date 必须是 YYYY-MM-DD；结合输入里的 currentDate/yesterdayDate/tomorrowDate 解析“今天/昨天/明天/前天/几月几号”等。
 - category 必须严格来自用户传入的 categories 数组；无法判断时返回 "其他"（如果存在），否则返回 categories 第一项。
+- 如果传入 categoryTree，subcategory 必须严格来自 categoryTree[category] 数组；无法判断时返回该 category 下最通用或第一项二级分类。
 - note 要简短自然，去掉金额、日期和明显的记账口令，比如“记一笔”“花了”“消费”等。
 - 不要编造用户没说的具体商家、用途或日期。`
 
@@ -47,7 +48,12 @@ function fallbackCategory(categories) {
   return categories.includes('其他') ? '其他' : categories[0]
 }
 
-function normalizeDraft(raw, categories, currentDate) {
+function fallbackSubcategory(categoryTree, category) {
+  const options = categoryTree[category] || []
+  return options[0] || ''
+}
+
+function normalizeDraft(raw, categories, categoryTree, currentDate) {
   if (!raw || typeof raw !== 'object') {
     return null
   }
@@ -60,17 +66,22 @@ function normalizeDraft(raw, categories, currentDate) {
   const category = typeof raw.category === 'string' && categories.includes(raw.category.trim())
     ? raw.category.trim()
     : fallbackCategory(categories)
+  const rawSubcategory = typeof raw.subcategory === 'string' ? raw.subcategory.trim() : ''
+  const subcategory = (categoryTree[category] || []).includes(rawSubcategory)
+    ? rawSubcategory
+    : fallbackSubcategory(categoryTree, category)
   const note = typeof raw.note === 'string' ? raw.note.trim().slice(0, 80) : ''
   return {
     type: 'expense',
     amount,
     category,
+    subcategory,
     transaction_date: normalizeDate(raw.transaction_date, currentDate),
     note,
   }
 }
 
-function normalizeDrafts(parsed, categories, currentDate) {
+function normalizeDrafts(parsed, categories, categoryTree, currentDate) {
   const rawDrafts = Array.isArray(parsed && parsed.drafts)
     ? parsed.drafts
     : Array.isArray(parsed && parsed.items)
@@ -80,7 +91,7 @@ function normalizeDrafts(parsed, categories, currentDate) {
         : []
 
   return rawDrafts
-    .map((item) => normalizeDraft(item, categories, currentDate))
+    .map((item) => normalizeDraft(item, categories, categoryTree, currentDate))
     .filter(Boolean)
     .slice(0, 10)
 }
@@ -95,6 +106,15 @@ exports.main = async (event) => {
   const categories = Array.isArray(event?.categories)
     ? event.categories.filter((item) => typeof item === 'string' && item.trim()).map((item) => item.trim()).slice(0, 30)
     : []
+  const rawTree = event?.categoryTree && typeof event.categoryTree === 'object' && !Array.isArray(event.categoryTree)
+    ? event.categoryTree
+    : {}
+  const categoryTree = {}
+  for (const category of categories) {
+    categoryTree[category] = Array.isArray(rawTree[category])
+      ? rawTree[category].filter((item) => typeof item === 'string' && item.trim()).map((item) => item.trim()).slice(0, 30)
+      : []
+  }
   const currentDate = normalizeDate(event?.currentDate, new Date().toISOString().slice(0, 10))
   const yesterdayDate = normalizeDate(event?.yesterdayDate, currentDate)
   const tomorrowDate = normalizeDate(event?.tomorrowDate, currentDate)
@@ -124,10 +144,11 @@ exports.main = async (event) => {
           {
             role: 'user',
             content:
-              '请解析这条语音记账文本，只能使用给定 categories：\n' +
+              '请解析这条语音记账文本，只能使用给定 categories 和 categoryTree：\n' +
               JSON.stringify({
                 text,
                 categories,
+                categoryTree,
                 currentDate,
                 yesterdayDate,
                 tomorrowDate,
@@ -166,7 +187,7 @@ exports.main = async (event) => {
     return { ok: false, error: '无法从模型输出中解析 JSON', raw: content.slice(0, 2000) }
   }
 
-  const drafts = normalizeDrafts(parsed, categories, currentDate)
+  const drafts = normalizeDrafts(parsed, categories, categoryTree, currentDate)
   if (drafts.length === 0) {
     return { ok: false, error: '模型未识别出有效账单', raw: content.slice(0, 2000) }
   }

@@ -50,6 +50,7 @@ const SUBCATEGORY_RULES: Array<{
   { category: '交通', subcategory: '加油充电', keywords: ['加油', '油费', '充电'] },
   { category: '交通', subcategory: '停车过路', keywords: ['停车', '高速', '过路'] },
   { category: '交通', subcategory: '车辆保养', keywords: ['保养', '洗车', '修车'] },
+  { category: '交通', subcategory: '车辆贷款', keywords: ['车贷', '车辆贷款', '汽车贷款'] },
   { category: '交通', subcategory: '长途交通', keywords: ['高铁', '火车', '机票', '飞机', '长途'] },
   { category: '生活服务', subcategory: '话费流量', keywords: ['话费', '流量', '手机'] },
   { category: '生活服务', subcategory: '快递物流', keywords: ['快递', '物流'] },

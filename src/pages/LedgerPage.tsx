@@ -292,6 +292,10 @@ export function LedgerPage() {
   const selectedReceiptDraftCount = receiptDrafts.filter((item) => item.selected).length
   const expenseOptions = categoryOptions('expense')
   const formSubcategoryOptions = subcategoryOptions(form.category)
+  const expenseSubcategoryMap = useMemo(
+    () => Object.fromEntries(expenseOptions.map((category) => [category, subcategoryOptions(category)])),
+    [expenseOptions, subcategoryOptions],
+  )
 
   useEffect(() => {
     if (editingId || form.amount || form.note) {
@@ -358,6 +362,7 @@ export function LedgerPage() {
       const aiDrafts = await parseVoiceTransactionsWithTokenhub({
         text,
         categories: expenseOptions,
+        subcategoryMap: expenseSubcategoryMap,
       })
       if (aiDrafts.length === 1) {
         const draft = aiDrafts[0]
@@ -572,19 +577,28 @@ export function LedgerPage() {
       if (receiptParseRunRef.current !== runId) {
         return
       }
-      const drafts = await parseReceiptFromImageDataUrl(dataUrl)
+      const drafts = await parseReceiptFromImageDataUrl({
+        imageDataUrl: dataUrl,
+        categories: expenseOptions,
+        subcategoryMap: expenseSubcategoryMap,
+      })
       if (receiptParseRunRef.current !== runId) {
         return
       }
       const normalized = drafts.map((draft, index) => {
         const category = inferBuiltInCategory(`${draft.category} ${draft.note}`, 'expense', categoryOptions('expense')) || pickCategory(draft.category, categoryOptions('expense'))
+        const subcategories = subcategoryOptions(category)
+        const subcategory =
+          draft.subcategory && subcategories.includes(draft.subcategory)
+            ? draft.subcategory
+            : (subcategories[0] ?? '')
         return {
           ...draft,
           id: `${Date.now()}-${index}`,
           selected: true,
           type: 'expense' as const,
           category,
-          subcategory: draft.subcategory || '',
+          subcategory,
         }
       })
 

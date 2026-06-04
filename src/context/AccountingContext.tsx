@@ -14,6 +14,8 @@ import { useNavigate } from 'react-router-dom'
 import {
   BUDGET_COLLECTION,
   RECURRING_COLLECTION,
+  STORED_VALUE_CARD_COLLECTION,
+  STORED_VALUE_CARD_RECORD_COLLECTION,
   TRANSACTION_COLLECTION,
   USER_CATEGORY_LISTS_COLLECTION,
   defaultExpenseSubcategories,
@@ -146,6 +148,27 @@ type VerifySignupOtp = (params: {
 
 type CloudRecurringRow = Omit<RecurringTemplate, 'id'> & { _id: string }
 
+type CloudStoredValueCardRecord = {
+  _id: string
+  user_id: string
+  card_id: string
+  type: 'recharge' | 'spend' | 'adjust'
+  amount: number
+  balance_after: number
+  transaction_date: string
+  note?: string | null
+  linked_transaction_id?: string | null
+  created_at: string
+}
+
+type CloudStoredValueCardRow = {
+  _id: string
+  user_id: string
+  name: string
+  merchant?: string | null
+  linked_transaction_id?: string | null
+}
+
 const toTransaction = (item: CloudTransaction): Transaction => ({
   id: item._id,
   user_id: item.user_id,
@@ -186,6 +209,153 @@ function periodAfterMonths(startPeriod: string, offset: number): string {
   }
   const date = new Date(year, month - 1 + offset, 1)
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+}
+
+function sortStoredValueCardRecords(a: CloudStoredValueCardRecord, b: CloudStoredValueCardRecord): number {
+  const dateOrder = a.transaction_date.localeCompare(b.transaction_date)
+  if (dateOrder !== 0) {
+    return dateOrder
+  }
+  return a.created_at.localeCompare(b.created_at)
+}
+
+function moneyCents(value: number): number {
+  return Math.round(Number(value || 0) * 100)
+}
+
+function isLegacyStoredValueCardTransaction(transaction: Transaction): boolean {
+  return (
+    transaction.type === 'expense' &&
+    (transaction.source === 'stored_value_card' || (transaction.note ?? '').includes('储值卡'))
+  )
+}
+
+async function findLegacyStoredValueCardRecordForTransaction(
+  db: NonNullable<typeof cloudbaseDb>,
+  userId: string,
+  transaction: Transaction,
+): Promise<CloudStoredValueCardRecord | null> {
+  if (!isLegacyStoredValueCardTransaction(transaction)) {
+    return null
+  }
+
+  const result = (await db
+    .collection(STORED_VALUE_CARD_RECORD_COLLECTION)
+    .where({
+      user_id: userId,
+      type: 'recharge',
+      transaction_date: transaction.transaction_date,
+    })
+    .get()) as { data?: CloudStoredValueCardRecord[] }
+
+  const candidates = (result.data ?? []).filter(
+    (record) =>
+      !record.linked_transaction_id &&
+      moneyCents(record.amount) === moneyCents(transaction.amount),
+  )
+
+  if (candidates.length <= 1) {
+    return candidates[0] ?? null
+  }
+
+  const cardsResult = (await db
+    .collection(STORED_VALUE_CARD_COLLECTION)
+    .where({ user_id: userId })
+    .get()) as { data?: CloudStoredValueCardRow[] }
+  const cardsById = new Map((cardsResult.data ?? []).map((card) => [card._id, card]))
+  const note = transaction.note ?? ''
+  const matched = candidates.filter((record) => {
+    const card = cardsById.get(record.card_id)
+    if (!card) {
+      return false
+    }
+    return Boolean((card.name && note.includes(card.name)) || (card.merchant && note.includes(card.merchant)))
+  })
+
+  return matched.length === 1 ? matched[0] : null
+}
+
+async function recalculateStoredValueCardBalance(
+  db: NonNullable<typeof cloudbaseDb>,
+  userId: string,
+  cardId: string,
+) {
+  const result = (await db
+    .collection(STORED_VALUE_CARD_RECORD_COLLECTION)
+    .where({ user_id: userId, card_id: cardId })
+    .get()) as { data?: CloudStoredValueCardRecord[] }
+
+  const records = [...(result.data ?? [])].sort(sortStoredValueCardRecords)
+  let balance = 0
+  let totalRecharged = 0
+  let totalSpent = 0
+
+  for (const record of records) {
+    const amount = Number(record.amount || 0)
+    if (record.type === 'spend') {
+      balance -= amount
+      totalSpent += amount
+    } else if (record.type === 'recharge') {
+      balance += amount
+      totalRecharged += amount
+    } else {
+      balance = amount
+    }
+
+    await db.collection(STORED_VALUE_CARD_RECORD_COLLECTION).doc(record._id).update({
+      balance_after: balance,
+    })
+  }
+
+  await db.collection(STORED_VALUE_CARD_COLLECTION).doc(cardId).update({
+    balance,
+    total_recharged: totalRecharged,
+    total_spent: totalSpent,
+    updated_at: new Date().toISOString(),
+  })
+}
+
+async function syncStoredValueCardRecordFromTransaction(
+  db: NonNullable<typeof cloudbaseDb>,
+  userId: string,
+  transactionId: string,
+  payload: {
+    type: TransactionType
+    amount: number
+    transaction_date: string
+    note: string | null
+  } | null,
+  legacyTransaction?: Transaction | null,
+) {
+  const result = (await db
+    .collection(STORED_VALUE_CARD_RECORD_COLLECTION)
+    .where({ user_id: userId, linked_transaction_id: transactionId })
+    .get()) as { data?: CloudStoredValueCardRecord[] }
+  let record = result.data?.[0] ?? null
+  if (!record && legacyTransaction) {
+    record = await findLegacyStoredValueCardRecordForTransaction(db, userId, legacyTransaction)
+    if (record) {
+      await db.collection(STORED_VALUE_CARD_RECORD_COLLECTION).doc(record._id).update({
+        linked_transaction_id: transactionId,
+      })
+    }
+  }
+  if (!record) {
+    return
+  }
+
+  if (!payload || payload.type !== 'expense') {
+    await db.collection(STORED_VALUE_CARD_RECORD_COLLECTION).doc(record._id).remove()
+    await recalculateStoredValueCardBalance(db, userId, record.card_id)
+    return
+  }
+
+  await db.collection(STORED_VALUE_CARD_RECORD_COLLECTION).doc(record._id).update({
+    amount: payload.amount,
+    transaction_date: payload.transaction_date,
+    note: payload.note,
+  })
+  await recalculateStoredValueCardBalance(db, userId, record.card_id)
 }
 
 const getSessionFromLoginState = (loginState: unknown): AuthSession | null => {
@@ -315,6 +485,18 @@ export type AccountingContextType = {
   recurringLoading: boolean
   loadRecurringTemplates: (userId: string) => Promise<void>
   createRecurringTemplate: (input: {
+    billing_type: RecurringBillingType
+    name: string
+    amount: number
+    total_amount?: number | null
+    category: string
+    subcategory?: string | null
+    day_of_month: number
+    start_period: string
+    start_date?: string
+    duration_months: number
+  }) => Promise<void>
+  updateRecurringTemplate: (id: string, input: {
     billing_type: RecurringBillingType
     name: string
     amount: number
@@ -1107,7 +1289,14 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
 
     try {
       if (editingId) {
+        const previousTransaction = transactions.find((item) => item.id === editingId) ?? null
         await db.collection(TRANSACTION_COLLECTION).doc(editingId).update(payload)
+        await syncStoredValueCardRecordFromTransaction(db, session.userId, editingId, {
+          type: payload.type,
+          amount: payload.amount,
+          transaction_date: payload.transaction_date,
+          note: payload.note,
+        }, previousTransaction)
       } else {
         await db.collection(TRANSACTION_COLLECTION).add({
           ...payload,
@@ -1205,6 +1394,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
       setMessage('')
 
       try {
+        const previousTransaction = transactions.find((item) => item.id === id) ?? null
         await db.collection(TRANSACTION_COLLECTION).doc(id).update({
           type: draft.type,
           amount,
@@ -1214,6 +1404,12 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
           note: draft.note.trim() || null,
           updated_at: new Date().toISOString(),
         })
+        await syncStoredValueCardRecordFromTransaction(db, session.userId, id, {
+          type: draft.type,
+          amount,
+          transaction_date: draft.transaction_date,
+          note: draft.note.trim() || null,
+        }, previousTransaction)
         setMessage('账单已更新')
         await loadTransactions(session.userId)
       } catch (saveError) {
@@ -1223,7 +1419,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
         setIsLoading(false)
       }
     },
-    [loadTransactions, session],
+    [loadTransactions, session, transactions],
   )
 
   const beginEditTransaction = useCallback(
@@ -1255,6 +1451,8 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
     setError('')
 
     try {
+      const previousTransaction = transactions.find((item) => item.id === id) ?? null
+      await syncStoredValueCardRecordFromTransaction(db, session.userId, id, null, previousTransaction)
       await db.collection(TRANSACTION_COLLECTION).doc(id).remove()
       setMessage('账单已删除')
       await loadTransactions(session.userId)
@@ -1334,6 +1532,91 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
         await loadTransactions(session.userId)
       } catch (e) {
         throw e instanceof Error ? e : new Error('创建失败')
+      }
+    },
+    [session, loadRecurringTemplates, loadTransactions],
+  )
+
+  const updateRecurringTemplate = useCallback(
+    async (
+      id: string,
+      input: {
+        billing_type: RecurringBillingType
+        name: string
+        amount: number
+        total_amount?: number | null
+        category: string
+        subcategory?: string | null
+        day_of_month: number
+        start_period: string
+        start_date?: string
+        duration_months: number
+      },
+    ) => {
+      const db = cloudbaseDb
+      if (!db || !session) {
+        throw new Error('未登录')
+      }
+      const now = new Date().toISOString()
+      const months = Math.max(1, Math.floor(input.duration_months))
+      const isInstallment = input.billing_type === 'installment'
+      const totalAmount = isInstallment ? Number(input.total_amount ?? input.amount) : null
+      const firstAmount = isInstallment ? splitRecurringAmount(totalAmount ?? 0, months, 0) : input.amount
+      try {
+        const related = (await db
+          .collection(TRANSACTION_COLLECTION)
+          .where({
+            user_id: session.userId,
+            recurring_template_id: id,
+          })
+          .get()) as { data?: Array<{ _id?: string }>; code?: string }
+
+        if (related.code) {
+          throw new Error('查询相关账单失败')
+        }
+
+        for (const row of related.data ?? []) {
+          if (row._id) {
+            await db.collection(TRANSACTION_COLLECTION).doc(row._id).remove()
+          }
+        }
+
+        await db.collection(RECURRING_COLLECTION).doc(id).update({
+          billing_type: input.billing_type,
+          name: input.name.trim(),
+          amount: firstAmount,
+          total_amount: totalAmount,
+          category: input.category,
+          subcategory: input.subcategory ?? null,
+          day_of_month: input.day_of_month,
+          start_period: input.start_period,
+          start_date: input.start_date ?? null,
+          duration_months: months,
+          updated_at: now,
+        })
+
+        for (let index = 0; index < months; index += 1) {
+          const period = periodAfterMonths(input.start_period, index)
+          const transactionDate = effectiveBillingDateISO(period, input.day_of_month)
+          await db.collection(TRANSACTION_COLLECTION).add({
+            user_id: session.userId,
+            type: 'expense',
+            amount: isInstallment ? splitRecurringAmount(totalAmount ?? 0, months, index) : input.amount,
+            category: input.category,
+            subcategory: input.subcategory ?? null,
+            transaction_date: transactionDate,
+            note: `${isInstallment ? '分期自动记账' : '固定周期记账'} · ${input.name.trim()} · 第 ${index + 1}/${months} 期`,
+            source: 'recurring',
+            recurring_template_id: id,
+            created_at: now,
+            updated_at: now,
+          })
+        }
+
+        await loadRecurringTemplates(session.userId)
+        await loadTransactions(session.userId)
+      } catch (e) {
+        throw e instanceof Error ? e : new Error('保存失败')
       }
     },
     [session, loadRecurringTemplates, loadTransactions],
@@ -1455,6 +1738,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
       recurringLoading,
       loadRecurringTemplates,
       createRecurringTemplate,
+      updateRecurringTemplate,
       deleteRecurringTemplate,
       setRecurringPaused,
       expenseCategoryNames,

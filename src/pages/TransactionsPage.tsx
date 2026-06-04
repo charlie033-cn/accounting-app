@@ -13,7 +13,9 @@ type TimeView = 'day' | 'month' | 'year'
 type ExpenseChartItem = {
   key: string
   label: string
+  fullLabel: string
   amount: number
+  count: number
   active: boolean
 }
 
@@ -83,6 +85,19 @@ function formatPeriodControlLabel(timeView: TimeView, day: string, month: string
   return year || '年份'
 }
 
+function getChartAxisStep(maxValue: number, timeView: TimeView) {
+  const rawStep = maxValue / 6
+  const steps =
+    timeView === 'day'
+      ? [10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
+      : [100, 200, 500, 1000, 1500, 2000, 3000, 5000, 10000]
+  return steps.find((step) => rawStep <= step) ?? steps[steps.length - 1]
+}
+
+function formatAxisMoney(value: number) {
+  return `¥${Math.round(value).toLocaleString('zh-CN')}`
+}
+
 export function TransactionsPage() {
   const {
     transactions,
@@ -100,6 +115,8 @@ export function TransactionsPage() {
   const [filterYear, setFilterYear] = useState(currentYear)
   const [selectedCategory, setSelectedCategory] = useState('all')
   const [selectedSubcategory, setSelectedSubcategory] = useState('all')
+  const [selectedTrendKey, setSelectedTrendKey] = useState<string | null>(null)
+  const [trendChartScrollLeft, setTrendChartScrollLeft] = useState(0)
   const [selectedReportCategory, setSelectedReportCategory] = useState<string | null>(null)
   const [detailCategory, setDetailCategory] = useState<string | null>(null)
   const [deleteId, setDeleteId] = useState<string | null>(null)
@@ -172,13 +189,14 @@ export function TransactionsPage() {
       return Array.from({ length: 12 }, (_, index) => {
         const month = String(index + 1).padStart(2, '0')
         const period = `${year}-${month}`
-        const amount = expenseRows
-          .filter((item) => item.transaction_date.startsWith(period))
-          .reduce((sum, item) => sum + item.amount, 0)
+        const periodRows = expenseRows.filter((item) => item.transaction_date.startsWith(period))
+        const amount = periodRows.reduce((sum, item) => sum + item.amount, 0)
         return {
           key: period,
           label: `${index + 1}月`,
+          fullLabel: `${year}年${index + 1}月`,
           amount,
+          count: periodRows.length,
           active: currentMonth() === period,
         }
       })
@@ -189,14 +207,16 @@ export function TransactionsPage() {
     return Array.from({ length: days }, (_, index) => {
       const day = String(index + 1).padStart(2, '0')
       const date = `${period}-${day}`
-      const amount = expenseRows
-        .filter((item) => item.transaction_date === date)
-        .reduce((sum, item) => sum + item.amount, 0)
+      const dayRows = expenseRows.filter((item) => item.transaction_date === date)
+      const amount = dayRows.reduce((sum, item) => sum + item.amount, 0)
+      const displayDay = index + 1
       return {
         key: date,
-        label: String(index + 1),
+        label: String(displayDay),
+        fullLabel: `${period.slice(5, 7)}月${index + 1}日`,
         amount,
-        active: timeView === 'day' ? filterDay === date : todayISO() === date,
+        count: dayRows.length,
+        active: todayISO() === date,
       }
     })
   }, [filteredPeriodExpenseRows, timeView, filterYear, chartPeriod, filterDay])
@@ -211,12 +231,42 @@ export function TransactionsPage() {
     [expenseChartItems],
   )
 
-  const chartSummaryExpense = useMemo(() => {
-    if (timeView !== 'day') {
-      return chartTotalExpense
+  const chartYAxisTicks = useMemo(() => {
+    const step = getChartAxisStep(chartMaxExpense, timeView)
+    const maxTick = Math.max(step, Math.ceil(chartMaxExpense / step) * step)
+    return Array.from({ length: maxTick / step + 1 }, (_, index) => maxTick - index * step)
+  }, [chartMaxExpense, timeView])
+
+  const chartAxisMaxExpense = chartYAxisTicks[0] ?? 100
+
+  useEffect(() => {
+    if (expenseChartItems.length === 0) {
+      setSelectedTrendKey(null)
+      return
     }
-    return expenseChartItems.find((item) => item.key === filterDay)?.amount ?? 0
-  }, [timeView, chartTotalExpense, expenseChartItems, filterDay])
+    if (selectedTrendKey && expenseChartItems.some((item) => item.key === selectedTrendKey)) {
+      return
+    }
+    const activeItem = expenseChartItems.find((item) => item.active) ?? expenseChartItems[expenseChartItems.length - 1]
+    setSelectedTrendKey(activeItem.key)
+  }, [expenseChartItems, selectedTrendKey])
+
+  const selectedTrendIndex = useMemo(
+    () => expenseChartItems.findIndex((item) => item.key === selectedTrendKey),
+    [expenseChartItems, selectedTrendKey],
+  )
+
+  const selectedTrendItem = selectedTrendIndex >= 0 ? expenseChartItems[selectedTrendIndex] : null
+  const trendChartAxisWidth = 50
+  const trendBarWidth = timeView === 'year' ? 24 : 10
+  const trendBarGap = timeView === 'year' ? 10 : 2
+  const selectedTrendX =
+    selectedTrendIndex >= 0
+      ? trendChartAxisWidth +
+        selectedTrendIndex * (trendBarWidth + trendBarGap) +
+        trendBarWidth / 2 -
+        trendChartScrollLeft
+      : 0
 
   const categoryStats = useMemo<CategoryReportItem[]>(() => {
     const total = filteredPeriodExpenseRows.reduce((sum, item) => sum + item.amount, 0)
@@ -423,8 +473,40 @@ export function TransactionsPage() {
         <section className="transactions-chart" aria-label="支出柱状图">
           <div className="transactions-chart-summary" aria-label="当前筛选范围内合计">
             <span>总支出</span>
-            <strong className="expense">-{formatMoney(chartSummaryExpense)}</strong>
+            <strong className="expense">-{formatMoney(chartTotalExpense)}</strong>
           </div>
+          <div className="transactions-bar-chart-wrap">
+            <div className="transactions-bar-y-axis" aria-hidden>
+              {chartYAxisTicks.map((value, index) => (
+                <span key={`${index}-${value}`}>{formatAxisMoney(value)}</span>
+              ))}
+            </div>
+            <div className="transactions-bar-chart-grid" aria-hidden>
+              {chartYAxisTicks.map((value) => (
+                <span key={value} />
+              ))}
+            </div>
+            {selectedTrendItem ? (
+              <>
+                <span
+                  className="transactions-bar-connector"
+                  style={{
+                    '--transactions-trend-bar-x': `${selectedTrendX}px`,
+                  } as CSSProperties}
+                  aria-hidden
+                />
+                <div
+                  className="transactions-bar-floating-label"
+                  style={{
+                    '--transactions-trend-label-x': `${selectedTrendX}px`,
+                  } as CSSProperties}
+                  aria-live="polite"
+                >
+                  <span>{selectedTrendItem.fullLabel}支出</span>
+                  <strong>-{formatMoney(selectedTrendItem.amount)}</strong>
+                </div>
+              </>
+            ) : null}
           <div
             className={`transactions-bar-chart ${
               timeView === 'year' ? 'transactions-bar-chart--year' : ''
@@ -432,12 +514,14 @@ export function TransactionsPage() {
             style={{
               gridTemplateColumns: `repeat(${expenseChartItems.length}, var(--transactions-bar-width))`,
             }}
+            onScroll={(event) => setTrendChartScrollLeft(event.currentTarget.scrollLeft)}
           >
             {expenseChartItems.map((item, index) => {
               const height =
                 item.amount > 0 && chartMaxExpense > 0
-                  ? Math.max(8, (item.amount / chartMaxExpense) * 100)
+                  ? Math.max(8, (item.amount / chartAxisMaxExpense) * 100)
                   : 0
+              const isSelected = item.key === selectedTrendKey
               const showAxisLabel =
                 timeView === 'year' ||
                 index === 0 ||
@@ -446,18 +530,27 @@ export function TransactionsPage() {
                 item.active
               return (
                 <div className="transactions-bar-item" key={item.key}>
-                  <div className="transactions-bar-track" title={`${item.label} ${formatMoney(item.amount)}`}>
+                  <button
+                    type="button"
+                    className={`transactions-bar-track${isSelected ? ' selected' : ''}`}
+                    title={`${item.fullLabel} ${formatMoney(item.amount)}`}
+                    aria-label={`${item.fullLabel}，${item.count} 笔，支出 ${formatMoney(item.amount)}`}
+                    aria-pressed={isSelected}
+                    onClick={() => setSelectedTrendKey(item.key)}
+                    onFocus={() => setSelectedTrendKey(item.key)}
+                  >
                     <span
-                      className={`transactions-bar-fill${item.active ? ' active' : ''}`}
+                      className={`transactions-bar-fill${isSelected ? ' selected' : item.active ? ' active' : ''}`}
                       style={{ height: `${height}%` }}
                     />
-                  </div>
+                  </button>
                   <span className={`transactions-bar-label${item.active ? ' active' : ''}`}>
                     {showAxisLabel ? item.label : ''}
                   </span>
                 </div>
               )
             })}
+          </div>
           </div>
         </section>
 

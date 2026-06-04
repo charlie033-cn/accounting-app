@@ -23,25 +23,63 @@ function localDateISO(offsetDays = 0): string {
   return `${year}-${month}-${day}`
 }
 
+function normalizeCategoryTree(categories: string[], subcategoryMap?: Record<string, string[]>) {
+  return Object.fromEntries(
+    categories.map((category) => [
+      category,
+      Array.isArray(subcategoryMap?.[category])
+        ? subcategoryMap[category].map((item) => item.trim()).filter(Boolean)
+        : [],
+    ]),
+  )
+}
+
+function normalizeDraft(
+  raw: ReceiptParseDraft,
+  categories: string[],
+  categoryTree: Record<string, string[]>,
+): ReceiptParseDraft {
+  const category = categories.includes(raw.category) ? raw.category : (categories[0] ?? '其他支出')
+  const subcategoryOptions = categoryTree[category] ?? []
+  const subcategory =
+    typeof raw.subcategory === 'string' && subcategoryOptions.includes(raw.subcategory.trim())
+      ? raw.subcategory.trim()
+      : (subcategoryOptions[0] ?? '')
+  return {
+    ...raw,
+    category,
+    subcategory,
+  }
+}
+
 /**
  * 调用云函数，将本地图片 Data URL 发给 TokenHub 多模态模型解析。
  * 需在 CloudBase 部署 `parseReceiptTokenhub` 并配置 TOKENHUB_API_KEY。
  */
-export async function parseReceiptFromImageDataUrl(
-  imageDataUrl: string,
-): Promise<ReceiptParseDraft[]> {
+export async function parseReceiptFromImageDataUrl(input: {
+  imageDataUrl: string
+  categories: string[]
+  subcategoryMap?: Record<string, string[]>
+}): Promise<ReceiptParseDraft[]> {
   if (!cloudbaseApp) {
     throw new Error('CloudBase 环境未配置')
   }
-  const trimmed = imageDataUrl.trim()
+  const trimmed = input.imageDataUrl.trim()
   if (!trimmed.startsWith('data:image/')) {
     throw new Error('请使用相机或相册选择的图片（data:image/... 格式）')
   }
+  const categories = input.categories.map((item) => item.trim()).filter(Boolean)
+  if (categories.length === 0) {
+    throw new Error('缺少分类列表')
+  }
+  const categoryTree = normalizeCategoryTree(categories, input.subcategoryMap)
 
   const { result } = await cloudbaseApp.callFunction({
     name: PARSE_RECEIPT_CLOUD_FUNCTION,
     data: {
       imageDataUrl: trimmed,
+      categories,
+      categoryTree,
       currentDate: localDateISO(),
       yesterdayDate: localDateISO(-1),
     },
@@ -66,5 +104,5 @@ export async function parseReceiptFromImageDataUrl(
   if (drafts.length === 0) {
     throw new Error('未识别到可保存的账单')
   }
-  return drafts
+  return drafts.map((draft) => normalizeDraft(draft, categories, categoryTree))
 }

@@ -13,7 +13,8 @@ drafts 数组内每一项字段要求：
 - type：字符串，只能是 "expense"（支出）或 "income"（收入）
 - amount：数字，人民币金额，正数
 - transaction_date：字符串，格式 YYYY-MM-DD；日期必须结合用户消息里的当前日期上下文推断
-- category：字符串，简短中文分类名（如 餐饮、交通、购物）
+- category：字符串，必须来自用户消息给出的 categories
+- subcategory：字符串，必须来自用户消息给出的 categoryTree[category]
 - note：字符串，商户名或简短说明，可为空字符串
 如果图片是账单列表、转账明细、外卖/购物清单等包含多笔独立记录，请拆成多笔；如果只是一张小票总额，输出一笔。
 日期规则：
@@ -50,25 +51,40 @@ function normalizeType(v) {
   return 'expense'
 }
 
-function normalizeDraft(obj, fallbackDate) {
+function fallbackCategory(categories) {
+  return categories.includes('其他支出') ? '其他支出' : (categories[0] || '其他支出')
+}
+
+function fallbackSubcategory(categoryTree, category) {
+  const options = categoryTree[category] || []
+  return options[0] || ''
+}
+
+function normalizeDraft(obj, fallbackDate, categories, categoryTree) {
   const amount = Number(obj.amount)
   const type = normalizeType(obj.type)
   const dateStr = typeof obj.transaction_date === 'string' ? obj.transaction_date.trim() : ''
   const transaction_date = /^\d{4}-\d{2}-\d{2}$/.test(dateStr)
     ? dateStr
     : fallbackDate
-  const category = typeof obj.category === 'string' ? obj.category.trim() : ''
+  const rawCategory = typeof obj.category === 'string' ? obj.category.trim() : ''
+  const category = categories.includes(rawCategory) ? rawCategory : fallbackCategory(categories)
+  const rawSubcategory = typeof obj.subcategory === 'string' ? obj.subcategory.trim() : ''
+  const subcategory = (categoryTree[category] || []).includes(rawSubcategory)
+    ? rawSubcategory
+    : fallbackSubcategory(categoryTree, category)
   const note = typeof obj.note === 'string' ? obj.note.trim() : ''
   return {
     type,
     amount: Number.isFinite(amount) && amount >= 0 ? amount : 0,
-    category: category || '其他',
+    category,
+    subcategory,
     transaction_date,
     note,
   }
 }
 
-function normalizeDrafts(parsed, fallbackDate) {
+function normalizeDrafts(parsed, fallbackDate, categories, categoryTree) {
   const rawDrafts = Array.isArray(parsed)
     ? parsed
     : Array.isArray(parsed && parsed.drafts)
@@ -83,7 +99,7 @@ function normalizeDrafts(parsed, fallbackDate) {
 
   return rawDrafts
     .filter((item) => item && typeof item === 'object')
-    .map((item) => normalizeDraft(item, fallbackDate))
+    .map((item) => normalizeDraft(item, fallbackDate, categories, categoryTree))
     .filter((item) => item.amount > 0)
     .slice(0, 20)
 }
@@ -113,6 +129,21 @@ exports.main = async (event) => {
   const base = (process.env.TOKENHUB_BASE_URL || DEFAULT_BASE).replace(/\/$/, '')
   const currentDate = validDateOrToday(event && event.currentDate)
   const yesterdayDate = validDateOrToday(event && event.yesterdayDate)
+  const categories = Array.isArray(event?.categories)
+    ? event.categories.filter((item) => typeof item === 'string' && item.trim()).map((item) => item.trim()).slice(0, 30)
+    : []
+  const rawTree = event?.categoryTree && typeof event.categoryTree === 'object' && !Array.isArray(event.categoryTree)
+    ? event.categoryTree
+    : {}
+  const categoryTree = {}
+  for (const category of categories) {
+    categoryTree[category] = Array.isArray(rawTree[category])
+      ? rawTree[category].filter((item) => typeof item === 'string' && item.trim()).map((item) => item.trim()).slice(0, 30)
+      : []
+  }
+  if (categories.length === 0) {
+    return { ok: false, error: '缺少分类列表' }
+  }
 
   let res
   try {
@@ -134,6 +165,7 @@ exports.main = async (event) => {
                 text:
                   `请根据这张图片输出记账 JSON，若有多笔独立账单请放入 drafts 数组。` +
                   `当前日期是 ${currentDate}，昨天是 ${yesterdayDate}。` +
+                  `只能使用这些一级分类和二级分类：${JSON.stringify({ categories, categoryTree })}。` +
                   `如果图片显示“昨天”，transaction_date 必须是 ${yesterdayDate}；` +
                   `如果只显示月日没有年份，请使用 ${currentDate.slice(0, 4)} 年。`,
               },
@@ -179,7 +211,7 @@ exports.main = async (event) => {
     }
   }
 
-  const drafts = normalizeDrafts(parsed, currentDate)
+  const drafts = normalizeDrafts(parsed, currentDate, categories, categoryTree)
   if (drafts.length === 0) {
     return { ok: false, error: '未识别到可保存的账单金额，请换更清晰的图片。' }
   }
@@ -187,6 +219,7 @@ exports.main = async (event) => {
     type: draft.type,
     amount: String(draft.amount),
     category: draft.category,
+    subcategory: draft.subcategory,
     transaction_date: draft.transaction_date,
     note: draft.note,
   }))

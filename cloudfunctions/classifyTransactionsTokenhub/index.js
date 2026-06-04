@@ -6,12 +6,14 @@
 const DEFAULT_BASE = 'https://tokenhub.tencentmaas.com/v1'
 const DEFAULT_MODEL = 'hunyuan-lite'
 
-const SYSTEM_PROMPT = `你是记账分类助手。根据账单文本，从用户给定分类列表中选择最合适的分类。
+const SYSTEM_PROMPT = `你是记账分类助手。根据账单文本，从用户给定分类体系中选择最合适的一级分类和二级分类。
 必须只输出 JSON 对象，不要 markdown 代码围栏，不要解释。
-输出格式必须为：{"items":[{"id":"原始 id","category":"分类名"}]}。
+输出格式必须为：{"items":[{"id":"原始 id","category":"一级分类名","subcategory":"二级分类名"}]}。
 规则：
 - category 必须严格来自对应账单传入的 categories 数组。
+- 如果传入 categoryTree，subcategory 必须严格来自 categoryTree[category] 数组。
 - 无法判断时返回 "其他"（如果 categories 中有其他），否则返回 categories 的第一项。
+- 如果无法判断二级分类，返回该 category 下最通用或第一项二级分类。
 - 不要新增分类，不要输出置信度或原因。`
 
 function parseJsonFromModelContent(text) {
@@ -43,14 +45,30 @@ function normalizeItem(raw) {
   const categories = Array.isArray(raw.categories)
     ? raw.categories.filter((item) => typeof item === 'string' && item.trim()).map((item) => item.trim()).slice(0, 30)
     : []
+  const categoryTree = {}
+  const rawTree = raw.categoryTree && typeof raw.categoryTree === 'object' && !Array.isArray(raw.categoryTree)
+    ? raw.categoryTree
+    : raw.subcategoryMap && typeof raw.subcategoryMap === 'object' && !Array.isArray(raw.subcategoryMap)
+      ? raw.subcategoryMap
+      : {}
+  for (const category of categories) {
+    categoryTree[category] = Array.isArray(rawTree[category])
+      ? rawTree[category].filter((item) => typeof item === 'string' && item.trim()).map((item) => item.trim()).slice(0, 30)
+      : []
+  }
   if (!id || !text || categories.length === 0) {
     return null
   }
-  return { id, type, text, amount, categories }
+  return { id, type, text, amount, categories, categoryTree }
 }
 
 function fallbackCategory(categories) {
   return categories.includes('其他') ? '其他' : categories[0]
+}
+
+function fallbackSubcategory(categoryTree, category) {
+  const options = categoryTree[category] || []
+  return options[0] || ''
 }
 
 exports.main = async (event) => {
@@ -92,6 +110,7 @@ exports.main = async (event) => {
                   amount: item.amount,
                   text: item.text,
                   categories: item.categories,
+                  categoryTree: item.categoryTree,
                 })),
               ),
           },
@@ -139,9 +158,14 @@ exports.main = async (event) => {
         return null
       }
       const category = typeof item.category === 'string' ? item.category.trim() : ''
+      const safeCategory = source.categories.includes(category) ? category : fallbackCategory(source.categories)
+      const subcategory = typeof item.subcategory === 'string' ? item.subcategory.trim() : ''
       return {
         id,
-        category: source.categories.includes(category) ? category : fallbackCategory(source.categories),
+        category: safeCategory,
+        subcategory: (source.categoryTree[safeCategory] || []).includes(subcategory)
+          ? subcategory
+          : fallbackSubcategory(source.categoryTree, safeCategory),
       }
     })
     .filter(Boolean)
