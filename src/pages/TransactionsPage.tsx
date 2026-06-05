@@ -518,8 +518,8 @@ export function TransactionsPage() {
           >
             {expenseChartItems.map((item, index) => {
               const height =
-                item.amount > 0 && chartMaxExpense > 0
-                  ? Math.max(8, (item.amount / chartAxisMaxExpense) * 100)
+                item.amount > 0 && chartAxisMaxExpense > 0
+                  ? Math.min(100, (item.amount / chartAxisMaxExpense) * 100)
                   : 0
               const isSelected = item.key === selectedTrendKey
               const showAxisLabel =

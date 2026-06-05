@@ -2067,17 +2067,6 @@ textarea:focus {
   pointer-events: none;
 }
 
-.transactions-bar-floating-label::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  bottom: -6px;
-  width: 12px;
-  height: 12px;
-  background: rgba(31, 31, 31, 0.94);
-  transform: translateX(-50%) rotate(45deg);
-}
-
 .transactions-bar-floating-label span {
   color: #fff;
   font-size: 11px;
