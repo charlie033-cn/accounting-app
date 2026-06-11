@@ -42,7 +42,8 @@ test-d3g2xaivpb160ef4f
 6. 已创建数据库集合 `recurring_templates`（字段示例：`user_id`、`name`、`amount`、`category`、`day_of_month`、`start_period`、`duration_months`、`status`、`created_at`、`updated_at`），权限规则与 `transactions` 一致。
 7. 已创建数据库集合 `user_category_lists`（每用户一条文档：`user_id`、`expense` 与 `income` 为字符串数组、时间戳），权限与 `transactions` 一致；用于「我的 → 分类管理」同步自定义分类。未创建时应用使用内置默认分类列表。
 8. 已创建数据库集合 `monthly_ai_reports`（字段示例：`user_id`、`month`、`report_version`、`fingerprint`、`report`、`created_at`、`updated_at`），权限与 `transactions` 一致；用于复用同月未变化账单的 AI 消费报告，减少重复 Token 消耗。
-9. `transactions` 中周期自动记账可选字段：`source`、`recurring_template_id`（需在控制台为查询条件建索引时按 CloudBase 文档配置）。
+9. 已创建数据库集合 `personal_assets`（字段示例：`user_id`、`name`、`type`、`status`、`amount`、`purchase_date`、`note`、`created_at`、`updated_at`），权限与 `transactions` 一致；用于「更多功能 → 我的家当」记录资产和日均成本。
+10. `transactions` 中周期自动记账可选字段：`source`、`recurring_template_id`（需在控制台为查询条件建索引时按 CloudBase 文档配置）。
 
 ## 小票识别（TokenHub，可选）
 

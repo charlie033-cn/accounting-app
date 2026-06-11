@@ -20,6 +20,34 @@ const SYSTEM_PROMPT = `你是记账 App 的语音记账解析助手。把用户�
 - note 要简短自然，去掉金额、日期和明显的记账口令，比如“记一笔”“花了”“消费”等。
 - 不要编造用户没说的具体商家、用途或日期。`
 
+const CHAT_SYSTEM_PROMPT = `你叫“小猪查理”，是记账 App 里的会话式 AI 伙伴，不要自称记账助手。你会看到用户本轮输入、最近对话、当前待确认支出草稿 currentDrafts、真实账本摘要 transactionContext、可用 categories 和 categoryTree。
+必须只输出 JSON 对象，不要 markdown 代码围栏，不要解释。
+输出格式必须为：{"reply":"收到，小猪查理把这笔改好啦。","drafts":[{"id":"draft-1","type":"expense","amount":"28","category":"餐饮","subcategory":"正餐","transaction_date":"YYYY-MM-DD","note":"午饭"}]}。
+reply 规则：
+- reply 要像“小猪查理”在和用户聊天，轻松、自然、有一点点可爱和幽默，但不要啰嗦。
+- 不要使用“记账助手”“草稿”“草稿箱”“JSON”“字段”“对象”等内部或技术概念。
+- 可以说“这笔”“这几笔”“小猪查理帮你整理好了”“我改好啦”“你看下对不对”。
+- 如果需要追问，也要口语化，例如“小猪查理有点没对上号，你是想改麦当劳那笔吗？”。
+- 用户聊消费、预算、账单复盘、金融常识、理财习惯、省钱建议、消费决策等相关话题时，可以正常聊，但不要给具体投资收益承诺或高风险投资建议。
+- 用户问“最近的一笔高消费是什么”“上个月账单总额是多少”“分析半年消费趋势”“哪个分类花最多”等和真实账本数据相关的问题时，必须基于 transactionContext 里的真实数据回答；不要编造 transactionContext 中没有的数据。
+- 做账本分析时，回答要给出关键数字、时间范围和简单结论；如果数据不足，要明确说“小猪查理这边数据还不够”，并建议用户继续记几笔。
+- 回答账本分析问题时通常不要新增或修改 drafts，除非用户同时表达了新增/修改账单意图。
+- 用户聊明显无关的话题时，不要生硬拒绝；先轻松接一句，再自然把话题带回记账或消费，例如“哈哈这个小猪查理也想听，不过我先帮你把今天花的钱理顺，刚才还有哪笔要记吗？”。
+- 如果用户只是闲聊且没有新增/修改/删除账单意图，drafts 原样返回，reply 给出自然回应和轻柔引导。
+核心任务：
+- 如果用户新增消费，就在 currentDrafts 基础上追加新草稿。
+- 如果用户说“刚才那笔/里面的/它/第二笔/咖啡那笔/分类应该是交通/金额改成 35/日期改昨天/删掉打车”，必须结合 currentDrafts 和最近对话理解是在修改已有草稿，而不是要求用户补一条新支出。
+- 如果用户要求修改分类，category 必须严格来自 categories；subcategory 必须严格来自 categoryTree[category]。
+- 如果用户说“都改成某分类”，应用到所有相关草稿；如果指代不明确但 currentDrafts 只有一条，就改这一条。
+- 如果用户删除草稿，从 drafts 中移除对应项。
+- 返回 drafts 必须是修改后的完整待确认草稿列表，不只是本轮变化。
+- 保留已有草稿 id；新增草稿可以不填 id。
+- 这个 App 只记录支出，type 必须是 "expense"。
+- amount 必须是正数字符串，不要包含币种符号。
+- transaction_date 必须是 YYYY-MM-DD；结合 currentDate/yesterdayDate/tomorrowDate 解析相对日期。
+- note 简短自然，去掉金额、日期和明显的记账口令。
+- 如果无法理解用户想改哪一笔，drafts 原样返回，并在 reply 里追问用户。`
+
 function parseJsonFromModelContent(text) {
   let s = String(text).trim()
   const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i)
@@ -72,6 +100,7 @@ function normalizeDraft(raw, categories, categoryTree, currentDate) {
     : fallbackSubcategory(categoryTree, category)
   const note = typeof raw.note === 'string' ? raw.note.trim().slice(0, 80) : ''
   return {
+    id: typeof raw.id === 'string' ? raw.id.trim().slice(0, 80) : undefined,
     type: 'expense',
     amount,
     category,
@@ -96,6 +125,21 @@ function normalizeDrafts(parsed, categories, categoryTree, currentDate) {
     .slice(0, 10)
 }
 
+function normalizeTransactionContext(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return null
+  }
+  try {
+    const serialized = JSON.stringify(raw)
+    if (serialized.length > 14000) {
+      return null
+    }
+    return JSON.parse(serialized)
+  } catch {
+    return null
+  }
+}
+
 exports.main = async (event) => {
   const apiKey = process.env.TOKENHUB_API_KEY
   if (!apiKey) {
@@ -118,6 +162,29 @@ exports.main = async (event) => {
   const currentDate = normalizeDate(event?.currentDate, new Date().toISOString().slice(0, 10))
   const yesterdayDate = normalizeDate(event?.yesterdayDate, currentDate)
   const tomorrowDate = normalizeDate(event?.tomorrowDate, currentDate)
+  const mode = event?.mode === 'chat-accounting' ? 'chat-accounting' : 'voice-parse'
+  const currentDrafts = Array.isArray(event?.currentDrafts)
+    ? event.currentDrafts
+      .map((item) => normalizeDraft(item, categories, categoryTree, currentDate))
+      .filter(Boolean)
+      .slice(0, 20)
+    : []
+  const recentMessages = Array.isArray(event?.recentMessages)
+    ? event.recentMessages
+      .filter((item) =>
+        item &&
+        typeof item === 'object' &&
+        (item.role === 'assistant' || item.role === 'user') &&
+        typeof item.text === 'string'
+      )
+      .map((item) => ({
+        role: item.role,
+        text: item.text.trim().slice(0, 240),
+      }))
+      .filter((item) => item.text)
+      .slice(-8)
+    : []
+  const transactionContext = normalizeTransactionContext(event?.transactionContext)
 
   if (!text) {
     return { ok: false, error: '缺少语音文本' }
@@ -140,11 +207,13 @@ exports.main = async (event) => {
       body: JSON.stringify({
         model,
         messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'system', content: mode === 'chat-accounting' ? CHAT_SYSTEM_PROMPT : SYSTEM_PROMPT },
           {
             role: 'user',
             content:
-              '请解析这条语音记账文本，只能使用给定 categories 和 categoryTree：\n' +
+              (mode === 'chat-accounting'
+                ? '请结合上下文理解用户本轮输入，更新完整待确认草稿列表：\n'
+                : '请解析这条语音记账文本，只能使用给定 categories 和 categoryTree：\n') +
               JSON.stringify({
                 text,
                 categories,
@@ -152,6 +221,9 @@ exports.main = async (event) => {
                 currentDate,
                 yesterdayDate,
                 tomorrowDate,
+                currentDrafts,
+                recentMessages,
+                transactionContext,
               }),
           },
         ],
@@ -188,9 +260,16 @@ exports.main = async (event) => {
   }
 
   const drafts = normalizeDrafts(parsed, categories, categoryTree, currentDate)
-  if (drafts.length === 0) {
+  if (mode !== 'chat-accounting' && drafts.length === 0) {
     return { ok: false, error: '模型未识别出有效账单', raw: content.slice(0, 2000) }
   }
 
-  return { ok: true, draft: drafts[0], drafts }
+  return {
+    ok: true,
+    draft: drafts[0],
+    drafts,
+    reply: typeof parsed?.reply === 'string' && parsed.reply.trim()
+      ? parsed.reply.trim().slice(0, 240)
+      : undefined,
+  }
 }

@@ -5,11 +5,14 @@ import { AccountingProvider, useAccounting } from './context/AccountingContext'
 import { AppLayout } from './layout/AppLayout'
 import { AuthScreens } from './pages/AuthScreens'
 import { BudgetPage } from './pages/BudgetPage'
+import { ChatAccountingPage } from './pages/ChatAccountingPage'
 import { LedgerPage } from './pages/LedgerPage'
+import { LieFlatCalculatorPage } from './pages/LieFlatCalculatorPage'
 import { CategoryManagePage } from './pages/CategoryManagePage'
 import { MePage } from './pages/MePage'
 import { MorePage } from './pages/MorePage'
 import { MonthlyReportPage } from './pages/MonthlyReportPage'
+import { PersonalAssetsPage } from './pages/PersonalAssetsPage'
 import { RecurringPage } from './pages/RecurringPage'
 import { ReportPage } from './pages/ReportPage'
 import { StoredValueCardsPage } from './pages/StoredValueCardsPage'
@@ -65,8 +68,11 @@ function AppRoutes() {
           <Route path="more" element={<MorePage />} />
           <Route path="me" element={<MePage />} />
         </Route>
+        <Route path="chat" element={<ChatAccountingPage />} />
         <Route path="more/recurring" element={<RecurringPage />} />
         <Route path="more/stored-value-cards" element={<StoredValueCardsPage />} />
+        <Route path="more/personal-assets" element={<PersonalAssetsPage />} />
+        <Route path="more/lie-flat-calculator" element={<LieFlatCalculatorPage />} />
         <Route path="me/budget" element={<BudgetPage />} />
         <Route path="me/categories" element={<CategoryManagePage />} />
         <Route path="more/monthly-report" element={<Navigate to="/transactions/monthly-report" replace />} />

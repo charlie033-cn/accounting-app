@@ -15,6 +15,7 @@ export const RECURRING_COLLECTION = 'recurring_templates'
 export const MONTHLY_AI_REPORT_COLLECTION = 'monthly_ai_reports'
 export const STORED_VALUE_CARD_COLLECTION = 'stored_value_cards'
 export const STORED_VALUE_CARD_RECORD_COLLECTION = 'stored_value_card_records'
+export const PERSONAL_ASSET_COLLECTION = 'personal_assets'
 /** 每用户一条：自定义收支分类名称列表（与代码内默认合并逻辑见 AccountingContext） */
 export const USER_CATEGORY_LISTS_COLLECTION = 'user_category_lists'
 

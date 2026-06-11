@@ -6,7 +6,6 @@ import { ConfirmActionSheet } from '../components/ConfirmActionSheet'
 import { dynamicDailyBudget } from '../accounting/budgetMath'
 import { useAccounting } from '../context/AccountingContext'
 import { parseReceiptFromImageDataUrl, type ReceiptParseDraft } from '../lib/parseReceiptTokenhub'
-import { parseVoiceTransactionsWithTokenhub } from '../lib/parseVoiceTransactionTokenhub'
 import type { Transaction, TransactionFormState } from '../types/transaction'
 import { categoryEmoji } from '../utils/categoryEmoji'
 
@@ -42,154 +41,6 @@ type ReceiptReviewItem = ReceiptParseDraft & {
   selected: boolean
 }
 
-type BrowserSpeechRecognition = {
-  lang: string
-  interimResults: boolean
-  continuous: boolean
-  start: () => void
-  stop: () => void
-  abort: () => void
-  onresult: ((event: { results: { [index: number]: { [index: number]: { transcript: string } } }; resultIndex: number }) => void) | null
-  onerror: ((event: { error: string }) => void) | null
-  onend: (() => void) | null
-}
-
-type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition
-
-type SpeechWindow = Window & {
-  SpeechRecognition?: BrowserSpeechRecognitionConstructor
-  webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor
-}
-
-async function ensureMicrophonePermission() {
-  if (!navigator.mediaDevices?.getUserMedia) {
-    return
-  }
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-  stream.getTracks().forEach((track) => track.stop())
-}
-
-function addDaysISO(offset: number) {
-  const date = new Date()
-  date.setDate(date.getDate() + offset)
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-function dateFromMonthDay(month: number, day: number) {
-  const now = new Date()
-  const date = new Date(now.getFullYear(), month - 1, day)
-  if (Number.isNaN(date.getTime())) {
-    return todayISO()
-  }
-  const year = date.getFullYear()
-  const mm = String(date.getMonth() + 1).padStart(2, '0')
-  const dd = String(date.getDate()).padStart(2, '0')
-  return `${year}-${mm}-${dd}`
-}
-
-function parseChineseNumber(input: string): number | null {
-  const digitMap: Record<string, number> = {
-    零: 0,
-    一: 1,
-    二: 2,
-    两: 2,
-    三: 3,
-    四: 4,
-    五: 5,
-    六: 6,
-    七: 7,
-    八: 8,
-    九: 9,
-  }
-  const unitMap: Record<string, number> = {
-    十: 10,
-    百: 100,
-    千: 1000,
-    万: 10000,
-  }
-  let total = 0
-  let section = 0
-  let number = 0
-  let seen = false
-
-  for (const char of input) {
-    if (char in digitMap) {
-      number = digitMap[char]
-      seen = true
-      continue
-    }
-    const unit = unitMap[char]
-    if (!unit) {
-      return null
-    }
-    seen = true
-    if (unit === 10000) {
-      section = (section + number) * unit
-      total += section
-      section = 0
-    } else {
-      section += (number || 1) * unit
-    }
-    number = 0
-  }
-
-  return seen ? total + section + number : null
-}
-
-function parseVoiceAmount(text: string) {
-  const arabic = text.match(/(\d+(?:\.\d+)?)\s*(?:元|块|块钱|人民币)?/)
-  if (arabic) {
-    return arabic[1]
-  }
-  const chinese = text.match(/([零一二两三四五六七八九十百千万]+)\s*(?:元|块|块钱|人民币)/)
-  if (!chinese) {
-    return ''
-  }
-  const amount = parseChineseNumber(chinese[1])
-  return amount == null ? '' : String(amount)
-}
-
-function parseVoiceDate(text: string) {
-  if (/前天/.test(text)) {
-    return addDaysISO(-2)
-  }
-  if (/昨天|昨日/.test(text)) {
-    return addDaysISO(-1)
-  }
-  if (/明天|明日/.test(text)) {
-    return addDaysISO(1)
-  }
-  const monthDay = text.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*(?:日|号)?/)
-  if (monthDay) {
-    return dateFromMonthDay(Number(monthDay[1]), Number(monthDay[2]))
-  }
-  const dayOnly = text.match(/(\d{1,2})\s*(?:日|号)/)
-  if (dayOnly) {
-    const now = new Date()
-    return dateFromMonthDay(now.getMonth() + 1, Number(dayOnly[1]))
-  }
-  return todayISO()
-}
-
-function parseVoiceCategory(text: string, options: string[]) {
-  return inferBuiltInCategory(text, 'expense', options)
-}
-
-function cleanVoiceNote(text: string) {
-  return text
-    .replace(/[，。,.]/g, ' ')
-    .replace(/(今天|昨日|昨天|前天|明天|明日)/g, ' ')
-    .replace(/\d{1,2}\s*月\s*\d{1,2}\s*(日|号)?/g, ' ')
-    .replace(/\d{1,2}\s*(日|号)/g, ' ')
-    .replace(/\d+(?:\.\d+)?\s*(元|块|块钱|人民币)?/g, ' ')
-    .replace(/[零一二两三四五六七八九十百千万]+\s*(元|块|块钱|人民币)/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
 export function LedgerPage() {
   const {
     form,
@@ -215,14 +66,7 @@ export function LedgerPage() {
 
   const receiptFileRef = useRef<HTMLInputElement>(null)
   const receiptParseRunRef = useRef(0)
-  const voiceRecognitionRef = useRef<BrowserSpeechRecognition | null>(null)
-  const voiceTranscriptRef = useRef('')
-  const voiceShouldApplyRef = useRef(false)
   const [receiptParsing, setReceiptParsing] = useState(false)
-  const [voiceListening, setVoiceListening] = useState(false)
-  const [voiceStopping, setVoiceStopping] = useState(false)
-  const [voiceClosing, setVoiceClosing] = useState(false)
-  const [voiceAiParsing, setVoiceAiParsing] = useState(false)
   const [receiptError, setReceiptError] = useState('')
   const [receiptDrafts, setReceiptDrafts] = useState<ReceiptReviewItem[]>([])
   const [deleteTarget, setDeleteTarget] = useState<Transaction | null>(null)
@@ -317,12 +161,6 @@ export function LedgerPage() {
     })
   }, [day, editingId, form.amount, form.note, setForm])
 
-  useEffect(() => {
-    return () => {
-      voiceRecognitionRef.current?.abort()
-    }
-  }, [])
-
   const openReceiptPicker = () => {
     setReceiptError('')
     receiptFileRef.current?.click()
@@ -333,192 +171,6 @@ export function LedgerPage() {
     setReceiptParsing(false)
     setReceiptError('')
     setMessage('已取消识图记账')
-  }
-
-  const applyLocalVoiceText = (text: string, message = '语音已填入，请核对后保存') => {
-    const expenseOptions = categoryOptions('expense')
-    const amount = parseVoiceAmount(text)
-    if (!amount) {
-      setReceiptError('没有识别到金额，可以说“午饭 28 元”')
-      return
-    }
-    setForm({
-      type: 'expense',
-      amount,
-      category: parseVoiceCategory(text, expenseOptions),
-      subcategory: '',
-      transaction_date: parseVoiceDate(text),
-      note: cleanVoiceNote(text),
-    })
-    setReceiptError('')
-    setError('')
-    setMessage(message)
-  }
-
-  const applyVoiceText = async (text: string) => {
-    const expenseOptions = categoryOptions('expense')
-    setVoiceAiParsing(true)
-    try {
-      const aiDrafts = await parseVoiceTransactionsWithTokenhub({
-        text,
-        categories: expenseOptions,
-        subcategoryMap: expenseSubcategoryMap,
-      })
-      if (aiDrafts.length === 1) {
-        const draft = aiDrafts[0]
-        setForm({
-          ...draft,
-          subcategory: draft.subcategory || '',
-        })
-        setReceiptError('')
-        setError('')
-        setMessage('AI 语音记账已填入，请核对后保存')
-        return
-      }
-      if (aiDrafts.length > 1) {
-        setReceiptDrafts(
-          aiDrafts.map((draft, index) => ({
-            ...draft,
-            subcategory: draft.subcategory || '',
-            id: `${Date.now()}-voice-${index}`,
-            selected: true,
-          })),
-        )
-        setReceiptError('')
-        setError('')
-        setMessage(`AI 识别到 ${aiDrafts.length} 笔账单，请核对后保存`)
-        return
-      }
-    } catch {
-      // Keep voice accounting usable even if the AI cloud function is unavailable.
-    } finally {
-      setVoiceAiParsing(false)
-    }
-    applyLocalVoiceText(text, 'AI 暂不可用，已用本地规则填入，请核对后保存')
-  }
-
-  const resetVoiceDraftForm = () => {
-    const expenseOptions = categoryOptions('expense')
-    setForm({
-      type: 'expense',
-      amount: '',
-      category: expenseOptions[0] ?? '其他',
-      subcategory: '',
-      transaction_date: todayISO(),
-      note: '',
-    })
-  }
-
-  const startVoiceAccounting = async () => {
-    const SpeechRecognition =
-      (window as SpeechWindow).SpeechRecognition ?? (window as SpeechWindow).webkitSpeechRecognition
-    if (!SpeechRecognition) {
-      setReceiptError('当前浏览器暂不支持语音记账，请用手机系统浏览器或 Chrome 试试')
-      return
-    }
-
-    setReceiptError('')
-    try {
-      await ensureMicrophonePermission()
-    } catch {
-      setReceiptError('请允许麦克风权限后再试')
-      return
-    }
-
-    voiceRecognitionRef.current?.abort()
-    voiceTranscriptRef.current = ''
-    voiceShouldApplyRef.current = false
-    setVoiceAiParsing(false)
-    resetVoiceDraftForm()
-    const recognition = new SpeechRecognition()
-    voiceRecognitionRef.current = recognition
-    recognition.lang = 'zh-CN'
-    recognition.interimResults = false
-    recognition.continuous = true
-    recognition.onresult = (event) => {
-      if (voiceRecognitionRef.current !== recognition) {
-        return
-      }
-      const result = event.results[event.resultIndex]?.[0]?.transcript?.trim()
-      if (result) {
-        voiceTranscriptRef.current = `${voiceTranscriptRef.current} ${result}`.trim()
-      }
-    }
-    recognition.onerror = (event) => {
-      if (voiceRecognitionRef.current !== recognition) {
-        return
-      }
-      if (event.error === 'aborted') {
-        return
-      }
-      const message =
-        event.error === 'not-allowed'
-          ? '请允许麦克风权限后再试'
-          : '语音识别失败，请再试一次'
-      setReceiptError(message)
-      setVoiceListening(false)
-      setVoiceStopping(false)
-      setVoiceClosing(false)
-      setVoiceAiParsing(false)
-    }
-    recognition.onend = () => {
-      if (voiceRecognitionRef.current !== recognition) {
-        return
-      }
-      const shouldApply = voiceShouldApplyRef.current
-      const transcript = voiceTranscriptRef.current.trim()
-      voiceShouldApplyRef.current = false
-      voiceRecognitionRef.current = null
-      setVoiceListening(false)
-      setVoiceStopping(false)
-      setVoiceClosing(false)
-      if (!shouldApply) {
-        return
-      }
-      if (!transcript) {
-        setReceiptError('没有听清楚，请再试一次')
-        return
-      }
-      void applyVoiceText(transcript)
-    }
-    setVoiceListening(true)
-    setVoiceStopping(false)
-    setVoiceClosing(false)
-    try {
-      recognition.start()
-    } catch {
-      setVoiceListening(false)
-      setVoiceStopping(false)
-      setVoiceClosing(false)
-      setVoiceAiParsing(false)
-      setReceiptError('语音识别启动失败，请稍后再试')
-    }
-  }
-
-  const stopVoiceAccounting = () => {
-    voiceShouldApplyRef.current = true
-    setVoiceStopping(true)
-    setVoiceClosing(true)
-    window.setTimeout(() => {
-      try {
-        voiceRecognitionRef.current?.stop()
-      } catch {
-        setVoiceListening(false)
-        setVoiceStopping(false)
-        setVoiceClosing(false)
-        setReceiptError('语音识别结束失败，请再试一次')
-      }
-    }, 180)
-  }
-
-  const cancelVoiceAccounting = () => {
-    voiceShouldApplyRef.current = false
-    voiceTranscriptRef.current = ''
-    setVoiceListening(false)
-    setVoiceStopping(false)
-    setVoiceClosing(false)
-    setVoiceAiParsing(false)
-    voiceRecognitionRef.current?.abort()
   }
 
   const updateReceiptDraft = (id: string, patch: Partial<ReceiptReviewItem>) => {
@@ -772,20 +424,9 @@ export function LedgerPage() {
             )}
             <button
               type="button"
-              className="secondary-button ledger-receipt-scan-btn ledger-voice-btn"
-              onClick={() => void startVoiceAccounting()}
-              disabled={isLoading || receiptParsing || voiceListening || voiceAiParsing}
-            >
-              <span className="ledger-voice-icon" aria-hidden>
-                声
-              </span>
-              {voiceAiParsing ? '思考中…' : voiceListening ? '聆听中…' : '语音记账'}
-            </button>
-            <button
-              type="button"
               className="secondary-button ledger-receipt-scan-btn"
               onClick={openReceiptPicker}
-              disabled={isLoading || receiptParsing || voiceListening || voiceAiParsing}
+              disabled={isLoading || receiptParsing}
             >
               <img
                 className="ledger-receipt-scan-icon"
@@ -1062,51 +703,6 @@ export function LedgerPage() {
               </button>
             </div>
           </section>
-        </div>,
-        document.body,
-      )}
-
-      {voiceListening && createPortal(
-        <div className="ledger-receipt-sheet-layer" role="presentation">
-          <div className="ledger-receipt-sheet-backdrop" aria-hidden />
-          <section
-            className={`ledger-receipt-sheet ledger-voice-sheet${voiceClosing ? ' ledger-receipt-sheet--closing' : ''}`}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="ledger-voice-sheet-title"
-          >
-            <div className="ledger-voice-recording">
-              <span className="ledger-voice-recording-dot" aria-hidden />
-              <h3 id="ledger-voice-sheet-title">正在收音</h3>
-              <p>说完后点击结束收音，我会自动识别并填入表单。</p>
-              <p className="muted small">例如：昨天午饭 28 元</p>
-            </div>
-            <div className="ledger-receipt-sheet-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={cancelVoiceAccounting}
-                disabled={voiceStopping}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                className="primary-button"
-                onClick={stopVoiceAccounting}
-                disabled={voiceStopping}
-              >
-                {voiceStopping ? '识别中...' : '结束收音'}
-              </button>
-            </div>
-          </section>
-        </div>,
-        document.body,
-      )}
-
-      {voiceAiParsing && createPortal(
-        <div className="app-toast" role="status" aria-live="polite">
-          查理正在快速思考中···
         </div>,
         document.body,
       )}

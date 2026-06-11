@@ -15,9 +15,45 @@ const MORE_FEATURES = [
     icon: 'card',
     tone: 'green',
   },
+  {
+    title: '我的家当',
+    description: '记录房子车子手机电脑的日均成本',
+    to: '/more/personal-assets',
+    icon: 'asset',
+    tone: 'orange',
+  },
+  {
+    title: '躺平计算器',
+    description: '算算被动收入离躺平生活还有多远',
+    to: '/more/lie-flat-calculator',
+    icon: 'lie-flat',
+    tone: 'purple',
+  },
 ]
 
 function MoreFeatureIcon({ type }: { type: string }) {
+  if (type === 'lie-flat') {
+    return (
+      <svg viewBox="0 0 24 24" focusable="false" aria-hidden>
+        <path d="M4.5 15.5h15" />
+        <path d="M6.2 15.5v-3.1c0-.9.7-1.6 1.6-1.6h4.1" />
+        <path d="M12.6 10.8h3.7c.9 0 1.6.7 1.6 1.6v3.1" />
+        <path d="M8.2 10.8a2.1 2.1 0 1 1 0-4.2 2.1 2.1 0 0 1 0 4.2Z" />
+        <path d="M5.4 18.2h13.2" />
+      </svg>
+    )
+  }
+
+  if (type === 'asset') {
+    return (
+      <svg viewBox="0 0 24 24" focusable="false" aria-hidden>
+        <path d="M4.5 10.4 12 6.2l7.5 4.2" />
+        <path d="M5.2 10.8v6.5c0 .9.7 1.7 1.7 1.7h10.2c.9 0 1.7-.7 1.7-1.7v-6.5" />
+        <path d="M9.2 19v-4.2h5.6V19" />
+      </svg>
+    )
+  }
+
   if (type === 'card') {
     return (
       <svg viewBox="0 0 24 24" focusable="false" aria-hidden>
