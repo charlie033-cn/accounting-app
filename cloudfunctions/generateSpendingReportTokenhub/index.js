@@ -1,10 +1,10 @@
 /**
  * TokenHub 消费报告生成：基于聚合摘要输出自然语言复盘。
  * 控制台为该云函数配置环境变量：TOKENHUB_API_KEY（必填）
- * 可选：TOKENHUB_MODEL（默认 deepseek-v3.1-terminus）、TOKENHUB_BASE_URL（默认 https://tokenhub.tencentmaas.com/v1）
+ * 可选：TOKENHUB_MODEL（默认 deepseek-v4-flash）、TOKENHUB_BASE_URL（默认 https://tokenhub.tencentmaas.com/v1）
  */
 const DEFAULT_BASE = 'https://tokenhub.tencentmaas.com/v1'
-const DEFAULT_MODEL = 'deepseek-v3.1-terminus'
+const DEFAULT_MODEL = 'deepseek-v4-flash'
 
 const SYSTEM_PROMPT = `你是个人记账 App 的智能消费助手，名字叫“查理”。你要以查理读完用户账单后的口吻，生成专业、智能、有趣但不夸张的中文消费报告。
 必须只输出 JSON 对象，不要 markdown 代码围栏，不要解释。

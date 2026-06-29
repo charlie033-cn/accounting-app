@@ -115,14 +115,18 @@ export function LedgerPage() {
       return null
     }
     const todayVsDailyPercent =
-      daily > 0 ? (todayExpenseTotal / daily) * 100 : null
+      daily > 0 ? (todayExpenseTotal / daily) * 100 : todayExpenseTotal > 0 ? 100 : 0
     const monthVsBudgetPercent =
       budgetAmount > 0 ? (stats.expense / budgetAmount) * 100 : null
+    const dayOver = daily <= 0 || todayExpenseTotal > daily
+    const dayMeterPercent = dayOver && daily <= 0 ? 100 : Math.min(100, todayVsDailyPercent)
     return {
       monthRem: budgetAmount - stats.expense,
       dayRem: daily - todayExpenseTotal,
       cap: budgetAmount,
       daily,
+      dayOver,
+      dayMeterPercent,
       todayVsDailyPercent,
       monthVsBudgetPercent,
     }
@@ -306,7 +310,7 @@ export function LedgerPage() {
                 {formatMoney(ledgerBudgetStrip.dayRem)}
               </p>
               <p className="muted small ledger-budget-strip-meta">
-                今日可用 {formatMoney(ledgerBudgetStrip.daily)}
+                今日支出 {formatMoney(todayExpenseTotal)} / 可用 {formatMoney(ledgerBudgetStrip.daily)}
               </p>
             </div>
             <div className="ledger-budget-strip-col">
@@ -318,7 +322,7 @@ export function LedgerPage() {
                 {formatMoney(ledgerBudgetStrip.monthRem)}
               </p>
               <p className="muted small ledger-budget-strip-meta">
-                上限 {formatMoney(ledgerBudgetStrip.cap)}
+                本月支出 {formatMoney(stats.expense)} / 上限 {formatMoney(ledgerBudgetStrip.cap)}
               </p>
             </div>
             {(ledgerBudgetStrip.todayVsDailyPercent != null ||
@@ -331,11 +335,13 @@ export function LedgerPage() {
                         <span>日支出</span>
                         <strong
                           className={
-                            ledgerBudgetStrip.todayVsDailyPercent > 100 ? 'over' : undefined
+                            ledgerBudgetStrip.dayOver ? 'over' : undefined
                           }
                         >
                           {formatMoney(todayExpenseTotal)} ·{' '}
-                          {ledgerBudgetStrip.todayVsDailyPercent.toFixed(0)}%
+                          {ledgerBudgetStrip.daily <= 0
+                            ? '已超日可用'
+                            : `${ledgerBudgetStrip.todayVsDailyPercent.toFixed(0)}%`}
                         </strong>
                       </div>
                       <div
@@ -343,17 +349,18 @@ export function LedgerPage() {
                         role="progressbar"
                         aria-valuemin={0}
                         aria-valuemax={100}
-                        aria-valuenow={Math.round(
-                          Math.min(100, ledgerBudgetStrip.todayVsDailyPercent),
-                        )}
+                        aria-valuenow={Math.round(ledgerBudgetStrip.dayMeterPercent)}
                         aria-label="今日已支出相对日均比例"
                       >
                         <div
                           className={`meter-fill today ${
-                            ledgerBudgetStrip.todayVsDailyPercent > 100 ? 'over' : ''
+                            ledgerBudgetStrip.dayOver ? 'over' : ''
                           }`}
                           style={{
-                            width: `${Math.min(100, ledgerBudgetStrip.todayVsDailyPercent)}%`,
+                            width: `${ledgerBudgetStrip.dayMeterPercent}%`,
+                            background: ledgerBudgetStrip.dayOver
+                              ? 'linear-gradient(90deg, #dc2626, #f97316)'
+                              : undefined,
                           }}
                         />
                       </div>

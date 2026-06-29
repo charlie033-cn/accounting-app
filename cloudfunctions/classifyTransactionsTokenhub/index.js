@@ -1,10 +1,10 @@
 /**
  * TokenHub 文本分类：为规则未命中的账单草稿补全分类。
  * 控制台为该云函数配置环境变量：TOKENHUB_API_KEY（必填）
- * 可选：TOKENHUB_MODEL（默认 hunyuan-lite）、TOKENHUB_BASE_URL（默认 https://tokenhub.tencentmaas.com/v1）
+ * 可选：TOKENHUB_MODEL（默认 deepseek-v4-flash）、TOKENHUB_BASE_URL（默认 https://tokenhub.tencentmaas.com/v1）
  */
 const DEFAULT_BASE = 'https://tokenhub.tencentmaas.com/v1'
-const DEFAULT_MODEL = 'hunyuan-lite'
+const DEFAULT_MODEL = 'deepseek-v4-flash'
 
 const SYSTEM_PROMPT = `你是记账分类助手。根据账单文本，从用户给定分类体系中选择最合适的一级分类和二级分类。
 必须只输出 JSON 对象，不要 markdown 代码围栏，不要解释。

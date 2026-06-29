@@ -60,7 +60,7 @@ test-d3g2xaivpb160ef4f
 
 1. 云开发控制台 → **云函数** → 新建函数 `classifyTransactionsTokenhub`，或将仓库内 `cloudfunctions/classifyTransactionsTokenhub` 用 CLI 部署：
    - 本地已登录：`npm run deploy:fn-classify`
-2. 在该云函数的 **环境变量** 中配置 **`TOKENHUB_API_KEY`**（可复用小票识别函数的 Key）。可选：`TOKENHUB_MODEL`（默认 `deepseek-v3.1-terminus`）、`TOKENHUB_BASE_URL`（默认 `https://tokenhub.tencentmaas.com/v1`）。
+2. 在该云函数的 **环境变量** 中配置 **`TOKENHUB_API_KEY`**（可复用小票识别函数的 Key）。可选：`TOKENHUB_MODEL`（默认 `deepseek-v4-flash`）、`TOKENHUB_BASE_URL`（默认 `https://tokenhub.tencentmaas.com/v1`）。
 3. 确认云函数 **运行角色** 可访问外网（调用 TokenHub HTTPS）。
 
 ## 消费报告生成（TokenHub，可选）
@@ -69,7 +69,7 @@ test-d3g2xaivpb160ef4f
 
 1. 云开发控制台 → **云函数** → 新建函数 `generateSpendingReportTokenhub`，或将仓库内 `cloudfunctions/generateSpendingReportTokenhub` 用 CLI 部署：
    - 本地已登录：`npm run deploy:fn-report`
-2. 在该云函数的 **环境变量** 中配置 **`TOKENHUB_API_KEY`**（可复用小票识别函数的 Key）。可选：`TOKENHUB_MODEL`（默认 `hunyuan-lite`）、`TOKENHUB_BASE_URL`（默认 `https://tokenhub.tencentmaas.com/v1`）。
+2. 在该云函数的 **环境变量** 中配置 **`TOKENHUB_API_KEY`**（可复用小票识别函数的 Key）。可选：`TOKENHUB_MODEL`（默认 `deepseek-v4-flash`）、`TOKENHUB_BASE_URL`（默认 `https://tokenhub.tencentmaas.com/v1`）。
 3. 确认云函数 **运行角色** 可访问外网（调用 TokenHub HTTPS）。
 
 ## 常用命令

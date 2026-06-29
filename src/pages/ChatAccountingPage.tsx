@@ -513,7 +513,7 @@ export function ChatAccountingPage() {
           'assistant',
           drafts.length > 0
             ? '小猪查理有点没对上号，你想改哪一笔呀？可以说“把麦当劳改成正餐”或“第二笔改成交通”。'
-            : '哈哈，小猪查理先接住这句话。要是你想记账，可以像“午饭 32，打车 46”这样告诉我；想聊消费、预算、省钱这些，我也能陪你盘一盘。',
+            : '哈哈，小猪查理先接住这句话。你可以继续跟我聊生活、学习、消费选择、计划安排这些，我也能顺手帮你记账。',
         )
         return
       }
@@ -525,7 +525,7 @@ export function ChatAccountingPage() {
       setDrafts((items) => [...items, ...nextDrafts])
       addMessage('assistant', `小猪查理先帮你整理出 ${nextDrafts.length} 笔，看看对不对。不对的话，直接告诉我怎么改就行。`)
     } catch (parseError) {
-      addMessage('assistant', '刚才整理失败了，可以换个说法再发一次。')
+      addMessage('assistant', '刚才小猪查理有点走神了，可以换个说法再发一次，我继续陪你聊。')
       setChatError(parseError instanceof Error ? parseError.message : 'AI 整理失败')
     } finally {
       setIsParsing(false)
