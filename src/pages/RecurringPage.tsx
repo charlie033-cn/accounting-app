@@ -3,14 +3,17 @@ import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { todayISO } from '../accounting/constants'
 import { useAccounting } from '../context/AccountingContext'
-import { splitRecurringAmount } from '../lib/recurringSchedule'
+import {
+  effectiveBillingDateISO,
+  splitRecurringAmount,
+} from '../lib/recurringSchedule'
 import type { RecurringBillingType, RecurringTemplate } from '../types/recurring'
 
 function recurringStartDate(template: { start_date?: string | null; start_period: string; day_of_month: number }): string {
   if (template.start_date && /^\d{4}-\d{2}-\d{2}$/.test(template.start_date)) {
     return template.start_date
   }
-  return `${template.start_period}-${String(template.day_of_month).padStart(2, '0')}`
+  return effectiveBillingDateISO(template.start_period, template.day_of_month)
 }
 
 function recurringBillingType(template: RecurringTemplate): RecurringBillingType {
@@ -23,6 +26,35 @@ function recurringBillingType(template: RecurringTemplate): RecurringBillingType
 function recurringTotalAmount(template: { amount: number; total_amount?: number | null; duration_months: number }): number {
   const total = Number(template.total_amount)
   return Number.isFinite(total) && total > 0 ? total : template.amount * template.duration_months
+}
+
+function periodAfterMonths(startPeriod: string, offset: number): string {
+  const [year, month] = startPeriod.split('-').map(Number)
+  if (!year || !month || month < 1 || month > 12) {
+    return startPeriod
+  }
+  const date = new Date(year, month - 1 + offset, 1)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+}
+
+function recurringProgress(template: RecurringTemplate, today = todayISO()) {
+  const totalPeriods = Math.max(1, Math.floor(Number(template.duration_months) || 1))
+  let duePeriods = 0
+
+  for (let index = 0; index < totalPeriods; index += 1) {
+    const period = periodAfterMonths(template.start_period, index)
+    const dueDate = effectiveBillingDateISO(period, template.day_of_month)
+
+    if (dueDate <= today) {
+      duePeriods += 1
+    }
+  }
+
+  return {
+    totalPeriods,
+    duePeriods,
+    remainingPeriods: Math.max(0, totalPeriods - duePeriods),
+  }
 }
 
 export function RecurringPage() {
@@ -330,27 +362,43 @@ export function RecurringPage() {
                 <ul className="recurring-list recurring-list--sheet">
                   {recurringTemplates.map((t) => {
                     const type = recurringBillingType(t)
+                    const progress = recurringProgress(t)
+                    const remainingPeriodText =
+                      progress.remainingPeriods > 0
+                        ? `剩余 ${progress.remainingPeriods} 期`
+                        : '已结束'
+                    const categoryText = t.subcategory ? `${t.category} / ${t.subcategory}` : t.category
+                    const totalAmount = recurringTotalAmount(t)
                     return (
                       <li key={t.id} className="recurring-item">
-                        <div className="recurring-item-content">
-                          <div className="recurring-item-title">
-                            <strong>{t.name}</strong>
-                            <span className={`recurring-type-badge recurring-type-badge--${type}`}>
-                              {type === 'installment' ? '总额分期' : '固定周期'}
-                            </span>
+                        <div className="recurring-card-head">
+                          <div className="recurring-title-block">
+                            <strong className="recurring-item-name">{t.name}</strong>
+                            <span>{categoryText}</span>
+                          </div>
+                          <div className="recurring-card-badges">
                             <span className={`recurring-status-badge recurring-status-badge--${t.status}`}>
                               {t.status === 'active' ? '启用' : '暂停'}
                             </span>
+                            <span className={`recurring-type-badge recurring-type-badge--${type}`}>
+                              {type === 'installment' ? '总额分期' : '固定周期'}
+                            </span>
                           </div>
-                          <p className="recurring-item-main">
-                            {type === 'installment'
-                              ? `${formatMoney(recurringTotalAmount(t))} · ${t.duration_months} 期 · 每期约 ${formatMoney(t.amount)}`
-                              : `${formatMoney(t.amount)} / 期 · 共 ${t.duration_months} 期`}
-                          </p>
-                          <p className="muted small recurring-item-meta">
-                            每月 {t.day_of_month} 号 · {recurringStartDate(t)} 起 · {t.subcategory ? `${t.category} / ${t.subcategory}` : t.category}
-                          </p>
                         </div>
+
+                        <div className="recurring-card-summary">
+                          <div className="recurring-amount-block">
+                            <strong>{formatMoney(totalAmount)}</strong>
+                            <em>
+                              {type === 'installment'
+                                ? `${progress.totalPeriods} 期 · 每期约 ${formatMoney(t.amount)} · ${remainingPeriodText}`
+                                : `${progress.totalPeriods} 期 · 每期 ${formatMoney(t.amount)} · ${remainingPeriodText}`}
+                            </em>
+                          </div>
+                        </div>
+                        <p className="recurring-card-meta">
+                          每月 {t.day_of_month} 号 · {recurringStartDate(t)} 起记录
+                        </p>
                         <div className="recurring-actions">
                           <button
                             type="button"
