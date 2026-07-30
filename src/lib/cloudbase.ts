@@ -6,6 +6,7 @@ export const isCloudBaseConfigured = Boolean(cloudbaseEnvId)
 export const cloudbaseApp = isCloudBaseConfigured
   ? cloudbase.init({
       env: cloudbaseEnvId as string,
+      timeout: 65_000,
     })
   : null
 
@@ -16,7 +17,7 @@ export type CloudbaseDatabase = NonNullable<typeof cloudbaseDb>
 
 export const signInAnonymously = async () => {
   if (!cloudbaseAuth) {
-    throw new Error('CloudBase 环境未配置')
+    throw new Error('账号服务暂不可用')
   }
 
   const loginState = await cloudbaseAuth.getLoginState()
@@ -27,7 +28,7 @@ export const signInAnonymously = async () => {
   await cloudbaseAuth.anonymousAuthProvider().signIn()
   const nextLoginState = await cloudbaseAuth.getLoginState()
   if (!nextLoginState) {
-    throw new Error('CloudBase 匿名登录失败')
+    throw new Error('登录失败，请稍后重试')
   }
 
   return nextLoginState

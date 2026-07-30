@@ -62,7 +62,7 @@ export async function parseReceiptFromImageDataUrl(input: {
   subcategoryMap?: Record<string, string[]>
 }): Promise<ReceiptParseDraft[]> {
   if (!cloudbaseApp) {
-    throw new Error('CloudBase 环境未配置')
+    throw new Error('图片识别服务暂不可用')
   }
   const trimmed = input.imageDataUrl.trim()
   if (!trimmed.startsWith('data:image/')) {

@@ -7,6 +7,7 @@ import { ConfirmActionSheet } from '../components/ConfirmActionSheet'
 import { useAccounting } from '../context/AccountingContext'
 import type { Transaction, TransactionFormState } from '../types/transaction'
 import { categoryEmoji } from '../utils/categoryEmoji'
+import { dayDateRange, monthDateRange, yearDateRange } from '../lib/transactionDateRange'
 
 type TimeView = 'day' | 'month' | 'year'
 
@@ -101,6 +102,7 @@ function formatAxisMoney(value: number) {
 export function TransactionsPage() {
   const {
     transactions,
+    loadTransactionsByDateRange,
     formatMoney,
     updateTransaction,
     handleDeleteTransaction,
@@ -131,6 +133,9 @@ export function TransactionsPage() {
     note: '',
   })
   const [editError, setEditError] = useState('')
+  const [periodRows, setPeriodRows] = useState<Transaction[]>([])
+  const [periodLoading, setPeriodLoading] = useState(false)
+  const [periodError, setPeriodError] = useState('')
 
   const chartPeriod = timeView === 'year' ? filterYear : timeView === 'day' ? filterDay.slice(0, 7) : filterMonth
 
@@ -158,20 +163,54 @@ export function TransactionsPage() {
           : '选择年份'
   const periodControlLabel = formatPeriodControlLabel(timeView, filterDay, filterMonth, filterYear)
 
-  const periodExpenseRows = useMemo(() => {
-    return transactions.filter((item) => {
-      if (item.type !== 'expense') {
-        return false
+  useEffect(() => {
+    let cancelled = false
+
+    const loadPeriodRows = async () => {
+      const valid =
+        (timeView === 'day' && /^\d{4}-\d{2}-\d{2}$/.test(filterDay)) ||
+        (timeView === 'month' && /^\d{4}-\d{2}$/.test(filterMonth)) ||
+        (timeView === 'year' && /^\d{4}$/.test(filterYear))
+      if (!valid) {
+        setPeriodRows([])
+        return
       }
-      if (timeView === 'day') {
-        return item.transaction_date === filterDay
+
+      setPeriodLoading(true)
+      setPeriodError('')
+      try {
+        const range =
+          timeView === 'day'
+            ? dayDateRange(filterDay)
+            : timeView === 'month'
+              ? monthDateRange(filterMonth)
+              : yearDateRange(filterYear)
+        const rows = await loadTransactionsByDateRange(range)
+        if (!cancelled) {
+          setPeriodRows(rows)
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setPeriodRows([])
+          setPeriodError(error instanceof Error ? error.message : '账单加载失败')
+        }
+      } finally {
+        if (!cancelled) {
+          setPeriodLoading(false)
+        }
       }
-      if (timeView === 'month') {
-        return item.transaction_date.startsWith(filterMonth)
-      }
-      return filterYear.length === 4 && item.transaction_date.startsWith(filterYear)
-    })
-  }, [transactions, timeView, filterDay, filterMonth, filterYear])
+    }
+
+    void loadPeriodRows()
+    return () => {
+      cancelled = true
+    }
+  }, [filterDay, filterMonth, filterYear, loadTransactionsByDateRange, timeView, transactions])
+
+  const periodExpenseRows = useMemo(
+    () => periodRows.filter((item) => item.type === 'expense'),
+    [periodRows],
+  )
 
   const filteredPeriodExpenseRows = useMemo(() => {
     return periodExpenseRows.filter((item) => {
@@ -673,7 +712,8 @@ export function TransactionsPage() {
             <h2>{periodLabel}</h2>
           </div>
         </div>
-        {isLoading && <p className="muted">同步中...</p>}
+        {(isLoading || periodLoading) && <p className="muted">正在加载所选时间范围的账单...</p>}
+        {periodError && <p className="alert error">{periodError}</p>}
         <div className="transaction-list">
           {filteredTransactions.length === 0 ? (
             <div className="empty-state">

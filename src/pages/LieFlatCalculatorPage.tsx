@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { formatMoney } from '../accounting/format'
 import { useAccounting } from '../context/AccountingContext'
+import { recentMonthsDateRange } from '../lib/transactionDateRange'
+import type { Transaction } from '../types/transaction'
 
 type PlanKey = 'deposit' | 'wealth' | 'fund' | 'custom'
 
@@ -168,7 +170,8 @@ function formatDeltaMonths(base: number | null, next: number | null) {
 }
 
 export function LieFlatCalculatorPage() {
-  const { transactions } = useAccounting()
+  const { transactions, loadTransactionsByDateRange } = useAccounting()
+  const [spendingTransactions, setSpendingTransactions] = useState<Transaction[]>(transactions)
   const [savedInputs] = useState<CalculatorInputs | null>(() => readSavedCalculatorInputs())
   const initialInputs = savedInputs ?? EMPTY_CALCULATOR_INPUTS
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -261,10 +264,31 @@ export function LieFlatCalculatorPage() {
   }, [submittedInputs])
 
   const plan = PLANS[submittedInputs.planKey]
+
+  useEffect(() => {
+    let cancelled = false
+    const loadSpendingTransactions = async () => {
+      try {
+        const rows = await loadTransactionsByDateRange(recentMonthsDateRange(6))
+        if (!cancelled) {
+          setSpendingTransactions(rows)
+        }
+      } catch {
+        if (!cancelled) {
+          setSpendingTransactions(transactions)
+        }
+      }
+    }
+    void loadSpendingTransactions()
+    return () => {
+      cancelled = true
+    }
+  }, [loadTransactionsByDateRange, transactions])
+
   const spendingReference = useMemo(() => {
     const monthSet = new Set(recentMonthKeys(6))
     const totals = new Map<string, number>()
-    for (const transaction of transactions) {
+    for (const transaction of spendingTransactions) {
       if (transaction.type !== 'expense') {
         continue
       }
@@ -290,7 +314,7 @@ export function LieFlatCalculatorPage() {
       targetPrincipal,
       months,
     }
-  }, [result.annualRate, result.monthlySaving, result.principal, transactions])
+  }, [result.annualRate, result.monthlySaving, result.principal, spendingTransactions])
   const ringStyle = {
     background: `conic-gradient(var(--primary) ${displayProgress * 3.6}deg, rgba(22, 119, 255, 0.12) 0deg)`,
   }

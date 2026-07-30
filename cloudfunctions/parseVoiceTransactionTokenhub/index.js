@@ -1,10 +1,11 @@
 /**
  * TokenHub 语音文本记账：将浏览器语音识别后的中文文本解析为支出账单草稿。
  * 控制台为该云函数配置环境变量：TOKENHUB_API_KEY（必填）
- * 可选：TOKENHUB_MODEL（默认 deepseek-v4-flash）、TOKENHUB_BASE_URL（默认 https://tokenhub.tencentmaas.com/v1）
+ * 可选：TOKENHUB_MODEL（记账解析）、TOKENHUB_CHAT_MODEL（普通对话）、TOKENHUB_BASE_URL
  */
 const DEFAULT_BASE = 'https://tokenhub.tencentmaas.com/v1'
 const DEFAULT_MODEL = 'deepseek-v4-flash'
+const DEFAULT_CHAT_MODEL = 'deepseek-v4-flash'
 
 const SYSTEM_PROMPT = `你是记账 App 的语音记账解析助手。把用户口语化中文记账文本解析成一条或多条支出账单草稿。
 必须只输出 JSON 对象，不要 markdown 代码围栏，不要解释。
@@ -50,6 +51,27 @@ reply 规则：
 - transaction_date 必须是 YYYY-MM-DD；结合 currentDate/yesterdayDate/tomorrowDate 解析相对日期。
 - note 简短自然，去掉金额、日期和明显的记账口令。
 - 如果无法理解用户想改哪一笔，drafts 原样返回，并在 reply 里追问用户。`
+
+const CONVERSATION_SYSTEM_PROMPT = `你叫“小猪查理”，是用户熟悉的 AI 生活伙伴。你的回答要聪明、自然、有判断力，像认真听完用户再回应，而不是套模板。
+必须只输出 JSON 对象，不要 markdown 代码围栏，不要解释输出格式。格式为：{"reply":"自然完整的回复"}。
+规则：
+- 可以自然讨论生活安排、学习计划、情绪陪伴、亲子沟通、做饭、旅行、购物选择、效率方法、常识问答、写作灵感、消费决策和轻松闲聊。
+- 无论用户问什么，第一句话都要直接回应真正的问题，不要先介绍自己能做什么，不要说“你可以继续跟我聊……”，也不要用能力清单回避答案。
+- 能根据已有信息回答时就直接给结论；需要计算时认真计算；问题略有歧义时采用最合理的理解先回答，并简短说明假设，而不是立刻把问题推回给用户。
+- 只有确实缺少关键数据、涉及实时外部信息或无法安全回答时，才清楚说明限制，同时尽量提供下一步可执行的方法。
+- 不要每次都把话题拉回记账，也不要机械复述用户原话。
+- 根据问题复杂度回答 1-5 个自然段。简单问题简短回答，复杂问题可以分点，但不要堆砌空话。
+- 结合 recentMessages 保持上下文连续，理解“刚才那个”“继续说”“为什么”等指代，不要重复已经讲过的内容。
+- transactionContext 是用户真实账本摘要。只有用户询问消费、预算或账单时才使用；所有数字必须来自其中，数据不足时明确说明，不得编造。
+- 回答本月某个分类的总额、笔数或日均时，优先使用 transactionContext.currentMonth.categoryStats 中已经计算好的数据；其中 averageDailyExpense 按该月自然日计算，不要自行改用有消费记录的天数。
+- transactionContext.focusedQuery 是系统根据本轮问题和最近对话实时查询出的权威结果。只要存在 focusedQuery，就必须优先使用它回答时间范围、分类、总额、笔数、日均、趋势和明细问题。
+- focusedQuery.completeness.isComplete 为 true 时，transactions 已包含全部匹配明细，不得再声称“还有较早记录没显示”或“之后可以再翻”；用户要求“翻翻、列出来、都有哪些”时应立即依据 transactions 列出。
+- focusedQuery.completeness.isComplete 为 false 时，要明确说明匹配总数与当前可展示数量，不能猜测未展示记录的内容或原因。
+- 用户用“翻翻吧、继续、还有呢、第二笔、那几笔”等追问时，要结合 recentMessages 和 focusedQuery 延续上一轮的时间与分类条件，回答新增信息，不要原样重复上一条回复。
+- 如果汇总数字与可见明细数量不同，只能根据 completeness 解释，禁止自行编造“时间较早”“同步延迟”等原因。
+- 对消费选择要给出理由和权衡，不要只说“看个人情况”；对计划类问题尽量给出可执行步骤。
+- 保留一点小猪查理的亲切感和轻微幽默，但不要过度卖萌，不要每句话都自称“小猪查理”。
+- 不提供违法、有害内容，不做医疗诊断或具体投资收益承诺。`
 
 function parseJsonFromModelContent(text) {
   let s = String(text).trim()
@@ -134,7 +156,7 @@ function normalizeTransactionContext(raw) {
   }
   try {
     const serialized = JSON.stringify(raw)
-    if (serialized.length > 14000) {
+    if (serialized.length > 48000) {
       return null
     }
     return JSON.parse(serialized)
@@ -149,7 +171,13 @@ exports.main = async (event) => {
     return { ok: false, error: '云函数未配置 TOKENHUB_API_KEY，请在控制台为该函数添加环境变量。' }
   }
 
-  const text = typeof event?.text === 'string' ? event.text.trim().slice(0, 500) : ''
+  const mode = event?.mode === 'chat-accounting'
+    ? 'chat-accounting'
+    : event?.mode === 'assistant-chat'
+      ? 'assistant-chat'
+      : 'voice-parse'
+  const textLimit = mode === 'assistant-chat' ? 1600 : 700
+  const text = typeof event?.text === 'string' ? event.text.trim().slice(0, textLimit) : ''
   const categories = Array.isArray(event?.categories)
     ? event.categories.filter((item) => typeof item === 'string' && item.trim()).map((item) => item.trim()).slice(0, 30)
     : []
@@ -165,7 +193,6 @@ exports.main = async (event) => {
   const currentDate = normalizeDate(event?.currentDate, new Date().toISOString().slice(0, 10))
   const yesterdayDate = normalizeDate(event?.yesterdayDate, currentDate)
   const tomorrowDate = normalizeDate(event?.tomorrowDate, currentDate)
-  const mode = event?.mode === 'chat-accounting' ? 'chat-accounting' : 'voice-parse'
   const currentDrafts = Array.isArray(event?.currentDrafts)
     ? event.currentDrafts
       .map((item) => normalizeDraft(item, categories, categoryTree, currentDate))
@@ -182,10 +209,10 @@ exports.main = async (event) => {
       )
       .map((item) => ({
         role: item.role,
-        text: item.text.trim().slice(0, 240),
+        text: item.text.trim().slice(0, mode === 'assistant-chat' ? 600 : 320),
       }))
       .filter((item) => item.text)
-      .slice(-8)
+      .slice(mode === 'assistant-chat' ? -20 : -10)
     : []
   const transactionContext = normalizeTransactionContext(event?.transactionContext)
 
@@ -196,7 +223,11 @@ exports.main = async (event) => {
     return { ok: false, error: '缺少分类列表' }
   }
 
-  const model = (process.env.TOKENHUB_MODEL || DEFAULT_MODEL).trim()
+  const model = (
+    mode === 'assistant-chat'
+      ? process.env.TOKENHUB_CHAT_MODEL || process.env.TOKENHUB_MODEL || DEFAULT_CHAT_MODEL
+      : process.env.TOKENHUB_MODEL || DEFAULT_MODEL
+  ).trim()
   const base = (process.env.TOKENHUB_BASE_URL || DEFAULT_BASE).replace(/\/$/, '')
 
   let res
@@ -210,13 +241,23 @@ exports.main = async (event) => {
       body: JSON.stringify({
         model,
         messages: [
-          { role: 'system', content: mode === 'chat-accounting' ? CHAT_SYSTEM_PROMPT : SYSTEM_PROMPT },
+          {
+            role: 'system',
+            content:
+              mode === 'assistant-chat'
+                ? CONVERSATION_SYSTEM_PROMPT
+                : mode === 'chat-accounting'
+                  ? CHAT_SYSTEM_PROMPT
+                  : SYSTEM_PROMPT,
+          },
           {
             role: 'user',
             content:
-              (mode === 'chat-accounting'
-                ? '请结合上下文理解用户本轮输入，更新完整待确认草稿列表：\n'
-                : '请解析这条语音记账文本，只能使用给定 categories 和 categoryTree：\n') +
+              (mode === 'assistant-chat'
+                ? '请结合最近对话自然回应用户；只有用户询问账本时才使用 transactionContext：\n'
+                : mode === 'chat-accounting'
+                  ? '请结合上下文理解用户本轮输入，更新完整待确认草稿列表：\n'
+                  : '请解析这条语音记账文本，只能使用给定 categories 和 categoryTree：\n') +
               JSON.stringify({
                 text,
                 categories,
@@ -230,7 +271,7 @@ exports.main = async (event) => {
               }),
           },
         ],
-        temperature: 0.1,
+        temperature: mode === 'assistant-chat' ? 0.62 : 0.1,
       }),
     })
   } catch (e) {
@@ -262,8 +303,10 @@ exports.main = async (event) => {
     return { ok: false, error: '无法从模型输出中解析 JSON', raw: content.slice(0, 2000) }
   }
 
-  const drafts = normalizeDrafts(parsed, categories, categoryTree, currentDate)
-  if (mode !== 'chat-accounting' && drafts.length === 0) {
+  const drafts = mode === 'assistant-chat'
+    ? currentDrafts
+    : normalizeDrafts(parsed, categories, categoryTree, currentDate)
+  if (mode === 'voice-parse' && drafts.length === 0) {
     return { ok: false, error: '模型未识别出有效账单', raw: content.slice(0, 2000) }
   }
 
@@ -272,7 +315,7 @@ exports.main = async (event) => {
     draft: drafts[0],
     drafts,
     reply: typeof parsed?.reply === 'string' && parsed.reply.trim()
-      ? parsed.reply.trim().slice(0, 240)
+      ? parsed.reply.trim().slice(0, mode === 'assistant-chat' ? 1800 : 320)
       : undefined,
   }
 }

@@ -42,6 +42,13 @@ import type {
 import { cloudbaseAuth, cloudbaseDb, isCloudBaseConfigured } from '../lib/cloudbase'
 import { runRecurringGenerationIfDue } from '../lib/runRecurringGeneration'
 import { effectiveBillingDateISO, splitRecurringAmount } from '../lib/recurringSchedule'
+import {
+  fetchAllTransactions,
+  fetchRecentTransactions,
+  fetchTransactionsByDateRange,
+  type TransactionDateRange,
+} from '../lib/transactionQueries'
+import { monthDateRange } from '../lib/transactionDateRange'
 
 function budgetCloudMessage(raw: string): string {
   const t = raw.trim()
@@ -51,10 +58,7 @@ function budgetCloudMessage(raw: string): string {
     t.includes('ResourceNotFound') ||
     t.includes('COLLECTION_NOT_EXIST')
   ) {
-    return (
-      '云端还没有 budgets 数据库集合。请到云开发控制台 → 数据库 → 添加集合，名称填 budgets；' +
-      '安全规则与 transactions 保持一致（仅本人可读写带自己 user_id 的文档），保存后刷新本页。'
-    )
+    return '预算数据服务暂未完成配置，请联系管理员处理。'
   }
   return raw
 }
@@ -62,7 +66,7 @@ function budgetCloudMessage(raw: string): string {
 const DEFAULT_EXPENSE_CATEGORIES = [...expenseCategories] as string[]
 const DEFAULT_INCOME_CATEGORIES = [...incomeCategories] as string[]
 const DEFAULT_EXPENSE_SUBCATEGORIES = { ...defaultExpenseSubcategories }
-const TRANSACTION_FETCH_LIMIT = 1000
+const RECENT_TRANSACTION_FETCH_LIMIT = 200
 
 function normalizeUserCategoryNames(raw: unknown, fallback: string[]): string[] {
   if (!Array.isArray(raw)) {
@@ -109,10 +113,7 @@ function categoryListCloudMessage(raw: string): string {
     t.includes('ResourceNotFound') ||
     t.includes('COLLECTION_NOT_EXIST')
   ) {
-    return (
-      '云端还没有 user_category_lists 数据库集合。请到云开发控制台 → 数据库 → 添加集合，名称填 user_category_lists；' +
-      '安全规则与 transactions 一致（仅本人可读写带自己 user_id 的文档），保存后刷新本页。'
-    )
+    return '分类数据服务暂未完成配置，请联系管理员处理。'
   }
   return raw
 }
@@ -129,10 +130,6 @@ type RememberedAuth = {
   password: string
 }
 
-type CloudTransaction = Omit<Transaction, 'id'> & {
-  _id: string
-}
-
 type VerifySignupOtp = (params: {
   email: string
   token: string
@@ -142,6 +139,21 @@ type VerifySignupOtp = (params: {
     user?: unknown
   }
   error: {
+    message: string
+  } | null
+}>
+
+type ResetPasswordUpdate = (params: {
+  nonce: string
+  password: string
+}) => Promise<{
+  data: {
+    user?: unknown
+  }
+  error: {
+    code?: string
+    status?: string
+    category?: string
     message: string
   } | null
 }>
@@ -168,21 +180,6 @@ type CloudStoredValueCardRow = {
   merchant?: string | null
   linked_transaction_id?: string | null
 }
-
-const toTransaction = (item: CloudTransaction): Transaction => ({
-  id: item._id,
-  user_id: item.user_id,
-  type: item.type,
-  amount: Number(item.amount),
-  category: item.category,
-  subcategory: item.subcategory ?? null,
-  transaction_date: item.transaction_date,
-  note: item.note ?? null,
-  created_at: item.created_at,
-  updated_at: item.updated_at,
-  recurring_template_id: item.recurring_template_id ?? null,
-  source: item.source ?? null,
-})
 
 const toRecurringTemplate = (row: CloudRecurringRow): RecurringTemplate => ({
   id: row._id,
@@ -424,6 +421,72 @@ const clearRememberedAuth = () => {
   window.localStorage.removeItem(REMEMBERED_AUTH_STORAGE_KEY)
 }
 
+function passwordChangeErrorMessage(error: unknown) {
+  const value = error as {
+    code?: string
+    status?: string
+    message?: string
+    category?: string
+  } | null
+  const text = [value?.code, value?.status, value?.category, value?.message]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+
+  if (text.includes('password_too_weak') || text.includes('weak password')) {
+    return '新密码强度不足，请使用 8～32 位，并建议组合字母和数字'
+  }
+  if (
+    text.includes('invalid_password') ||
+    text.includes('wrong_password') ||
+    text.includes('invalid_credentials') ||
+    text.includes('invalid_username_or_password')
+  ) {
+    return '当前密码不正确，请重新输入'
+  }
+  if (text.includes('same_password') || text.includes('same password')) {
+    return '新密码不能与当前密码相同'
+  }
+  if (text.includes('resource_exhausted') || text.includes('too many')) {
+    return '操作过于频繁，请稍后再试'
+  }
+  if (text.includes('timeout') || text.includes('network') || text.includes('unavailable')) {
+    return '网络连接异常，请稍后重试'
+  }
+  return '密码修改失败，请检查输入后重试'
+}
+
+function passwordResetErrorMessage(error: unknown) {
+  const value = error as {
+    code?: string
+    status?: string
+    message?: string
+    category?: string
+  } | null
+  const text = [value?.code, value?.status, value?.category, value?.message]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+
+  if (
+    text.includes('invalid_verification_code') ||
+    text.includes('invalid code') ||
+    (text.includes('verification') && text.includes('expired'))
+  ) {
+    return '验证码不正确或已过期，请重新输入'
+  }
+  if (text.includes('password_too_weak') || text.includes('weak password')) {
+    return '新密码强度不足，请使用 8～32 位，并建议组合字母和数字'
+  }
+  if (text.includes('resource_exhausted') || text.includes('too many')) {
+    return '操作过于频繁，请稍后再试'
+  }
+  if (text.includes('timeout') || text.includes('network') || text.includes('unavailable')) {
+    return '网络连接异常，请稍后重试'
+  }
+  return '操作未完成，请检查邮箱或验证码后重试'
+}
+
 export type AccountingContextType = {
   isCloudBaseConfigured: boolean
   session: AuthSession | null
@@ -434,6 +497,8 @@ export type AccountingContextType = {
   setError: (v: string) => void
   setMessage: (v: string) => void
   loadTransactions: (userId: string) => Promise<void>
+  loadTransactionsByDateRange: (range: TransactionDateRange) => Promise<Transaction[]>
+  loadAllTransactions: () => Promise<Transaction[]>
   form: TransactionFormState
   setForm: React.Dispatch<React.SetStateAction<TransactionFormState>>
   editingId: string | null
@@ -447,6 +512,7 @@ export type AccountingContextType = {
   categoryOptions: (type: TransactionType) => string[]
   formatMoney: (n: number) => string
   handleSignOut: () => Promise<void>
+  changePassword: (oldPassword: string, newPassword: string) => Promise<void>
   authMode: 'sign-in' | 'sign-up'
   setAuthMode: (m: 'sign-in' | 'sign-up') => void
   email: string
@@ -462,6 +528,9 @@ export type AccountingContextType = {
   handleAuth: (event: FormEvent<HTMLFormElement>) => Promise<void>
   handleVerifySignup: (event: FormEvent<HTMLFormElement>) => Promise<void>
   cancelVerifyFlow: () => void
+  requestPasswordReset: (email: string) => Promise<void>
+  completePasswordReset: (code: string, newPassword: string) => Promise<void>
+  cancelPasswordReset: () => void
   budgetPeriod: string
   setBudgetPeriod: (v: string) => void
   budgetDocId: string | null
@@ -563,6 +632,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
   const [budgetSaving, setBudgetSaving] = useState(false)
   const [budgetError, setBudgetError] = useState('')
   const [budgetSuccess, setBudgetSuccess] = useState('')
+  const [budgetTransactions, setBudgetTransactions] = useState<Transaction[]>([])
   const [recurringTemplates, setRecurringTemplates] = useState<RecurringTemplate[]>([])
   const [recurringLoading, setRecurringLoading] = useState(false)
   const [expenseCategoryNames, setExpenseCategoryNames] = useState<string[]>(
@@ -578,6 +648,8 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
   const [categoriesLoading, setCategoriesLoading] = useState(false)
   const [categoriesSaving, setCategoriesSaving] = useState(false)
   const verifySignupRef = useRef<VerifySignupOtp | null>(null)
+  const passwordResetUpdateRef = useRef<ResetPasswordUpdate | null>(null)
+  const passwordResetEmailRef = useRef('')
   const messageDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const budgetSuccessDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -676,26 +748,11 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
     setError('')
 
     try {
-      const result = await db
-        .collection(TRANSACTION_COLLECTION)
-        .where({ user_id: userId })
-        .orderBy('transaction_date', 'desc')
-        .orderBy('created_at', 'desc')
-        .limit(TRANSACTION_FETCH_LIMIT)
-        .get()
-
-      setTransactions((result.data as CloudTransaction[]).map(toTransaction))
+      setTransactions(await fetchRecentTransactions(db, userId, RECENT_TRANSACTION_FETCH_LIMIT))
 
       const added = await runRecurringGenerationIfDue(db, userId)
       if (added > 0) {
-        const again = await db
-          .collection(TRANSACTION_COLLECTION)
-          .where({ user_id: userId })
-          .orderBy('transaction_date', 'desc')
-          .orderBy('created_at', 'desc')
-          .limit(TRANSACTION_FETCH_LIMIT)
-          .get()
-        setTransactions((again.data as CloudTransaction[]).map(toTransaction))
+        setTransactions(await fetchRecentTransactions(db, userId, RECENT_TRANSACTION_FETCH_LIMIT))
       }
 
       await loadRecurringTemplates(userId)
@@ -705,6 +762,27 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
       setIsLoading(false)
     }
   }, [loadRecurringTemplates])
+
+  const loadTransactionsByDateRange = useCallback(
+    async (range: TransactionDateRange) => {
+      const db = cloudbaseDb
+      const userId = session?.userId
+      if (!db || !userId) {
+        return []
+      }
+      return fetchTransactionsByDateRange(db, userId, range)
+    },
+    [session?.userId],
+  )
+
+  const loadAllTransactions = useCallback(async () => {
+    const db = cloudbaseDb
+    const userId = session?.userId
+    if (!db || !userId) {
+      return []
+    }
+    return fetchAllTransactions(db, userId)
+  }, [session?.userId])
 
   useEffect(() => {
     if (!cloudbaseAuth) {
@@ -737,6 +815,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
         setBudgetDocId(null)
         setBudgetAmount(null)
         setBudgetDraft('')
+        setBudgetTransactions([])
         setBudgetError('')
         setBudgetSuccess('')
         setRecurringTemplates([])
@@ -752,7 +831,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const userId = session?.userId
     const db = cloudbaseDb
-    if (!userId || !db) {
+    if (!userId || !db || !/^\d{4}-\d{2}$/.test(budgetPeriod)) {
       return
     }
 
@@ -763,20 +842,26 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
       setBudgetError('')
       setBudgetSuccess('')
       try {
-        const result = (await db
-          .collection(BUDGET_COLLECTION)
-          .where({ user_id: userId, period: budgetPeriod })
-          .limit(1)
-          .get()) as { data?: CloudBudgetDoc[]; code?: string; message?: string }
+        const [result, periodTransactions] = await Promise.all([
+          db
+            .collection(BUDGET_COLLECTION)
+            .where({ user_id: userId, period: budgetPeriod })
+            .limit(1)
+            .get() as Promise<{ data?: CloudBudgetDoc[]; code?: string; message?: string }>,
+          fetchTransactionsByDateRange(db, userId, monthDateRange(budgetPeriod)),
+        ])
 
         if (cancelled) {
           return
         }
 
+        setBudgetTransactions(periodTransactions)
+
         if (result.code) {
           setBudgetDocId(null)
           setBudgetAmount(null)
           setBudgetDraft('')
+          setBudgetTransactions([])
           setBudgetError(budgetCloudMessage(result.message || '预算加载失败'))
           return
         }
@@ -802,6 +887,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
           setBudgetDocId(null)
           setBudgetAmount(null)
           setBudgetDraft('')
+          setBudgetTransactions([])
           const raw = err instanceof Error ? err.message : '预算加载失败'
           setBudgetError(budgetCloudMessage(raw))
         }
@@ -816,7 +902,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [session?.userId, budgetPeriod])
+  }, [session?.userId, budgetPeriod, transactions])
 
   useEffect(() => {
     const userId = session?.userId
@@ -882,20 +968,23 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
   }, [session?.userId])
 
   const monthExpenseTotal = useMemo(() => {
-    return transactions
+    if (!/^\d{4}-\d{2}$/.test(budgetPeriod)) {
+      return 0
+    }
+    return budgetTransactions
       .filter((item) => item.type === 'expense' && item.transaction_date.startsWith(budgetPeriod))
       .reduce((sum, item) => sum + item.amount, 0)
-  }, [transactions, budgetPeriod])
+  }, [budgetTransactions, budgetPeriod])
 
   const todayExpenseTotal = useMemo(() => {
     if (budgetPeriod !== currentMonth()) {
       return 0
     }
     const day = todayISO()
-    return transactions
+    return budgetTransactions
       .filter((item) => item.type === 'expense' && item.transaction_date === day)
       .reduce((sum, item) => sum + item.amount, 0)
-  }, [transactions, budgetPeriod])
+  }, [budgetTransactions, budgetPeriod])
 
   const budgetDays = remainingBudgetDays(budgetPeriod)
   const dailyBudgetReference = dynamicDailyBudget(budgetPeriod, budgetAmount, monthExpenseTotal)
@@ -1107,6 +1196,58 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
     setError('')
   }, [])
 
+  const requestPasswordReset = useCallback(async (emailAddress: string) => {
+    if (!cloudbaseAuth) {
+      throw new Error('账号服务暂不可用，请稍后重试')
+    }
+
+    const normalizedEmail = emailAddress.trim().toLowerCase()
+    const result = await cloudbaseAuth.resetPasswordForEmail(normalizedEmail)
+    if (result.error) {
+      throw new Error(passwordResetErrorMessage(result.error))
+    }
+    if (!result.data.updateUser) {
+      throw new Error('验证码发送失败，请稍后重试')
+    }
+
+    passwordResetUpdateRef.current = result.data.updateUser as ResetPasswordUpdate
+    passwordResetEmailRef.current = normalizedEmail
+  }, [])
+
+  const completePasswordReset = useCallback(async (code: string, newPassword: string) => {
+    const updatePassword = passwordResetUpdateRef.current
+    if (!updatePassword) {
+      throw new Error('本次验证码流程已失效，请重新获取验证码')
+    }
+
+    const result = await updatePassword({
+      nonce: code.trim(),
+      password: newPassword,
+    })
+    if (result.error) {
+      throw new Error(passwordResetErrorMessage(result.error))
+    }
+
+    const nextSession = getSessionFromLoginState({ user: result.data.user })
+    if (!nextSession) {
+      throw new Error('密码已重置，请返回登录页使用新密码登录')
+    }
+
+    passwordResetUpdateRef.current = null
+    clearRememberedAuth()
+    setEmail(passwordResetEmailRef.current)
+    setPassword('')
+    setRememberPassword(false)
+    setSession(nextSession)
+    setMessage('密码已重置并登录')
+    await loadTransactions(nextSession.userId)
+  }, [loadTransactions])
+
+  const cancelPasswordReset = useCallback(() => {
+    passwordResetUpdateRef.current = null
+    passwordResetEmailRef.current = ''
+  }, [])
+
   const handleSignOut = async () => {
     if (!cloudbaseAuth) {
       return
@@ -1128,10 +1269,31 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
     setBudgetDocId(null)
     setBudgetAmount(null)
     setBudgetDraft('')
+    setBudgetTransactions([])
     setBudgetError('')
     setBudgetSuccess('')
     setMessage('已退出登录')
   }
+
+  const changePassword = useCallback(async (oldPassword: string, newPassword: string) => {
+    if (!cloudbaseAuth || !session) {
+      throw new Error('当前登录状态已失效，请重新登录')
+    }
+
+    const result = await cloudbaseAuth.resetPasswordForOld({
+      old_password: oldPassword,
+      new_password: newPassword,
+    })
+
+    if (result.error) {
+      throw new Error(passwordChangeErrorMessage(result.error))
+    }
+
+    clearRememberedAuth()
+    setRememberPassword(false)
+    setPassword('')
+    setMessage('密码修改成功，本机记住的旧密码已清除')
+  }, [session])
 
   const handleSaveBudget = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -1687,6 +1849,8 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
       setError,
       setMessage,
       loadTransactions,
+      loadTransactionsByDateRange,
+      loadAllTransactions,
       form,
       setForm,
       editingId,
@@ -1700,6 +1864,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
       categoryOptions,
       formatMoney,
       handleSignOut,
+      changePassword,
       authMode,
       setAuthMode,
       email,
@@ -1715,6 +1880,9 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
       handleAuth,
       handleVerifySignup,
       cancelVerifyFlow,
+      requestPasswordReset,
+      completePasswordReset,
+      cancelPasswordReset,
       budgetPeriod,
       setBudgetPeriod,
       budgetDocId,

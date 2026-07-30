@@ -45,6 +45,7 @@ export function CategoryManagePage({ embedded = false, onClose }: CategoryManage
     saveUserCategoryLists,
     restoreDefaultCategoryLists,
     categoriesSaving,
+    loadAllTransactions,
   } = useAccounting()
 
   const [draftExpense, setDraftExpense] = useState<string[]>([])
@@ -57,6 +58,7 @@ export function CategoryManagePage({ embedded = false, onClose }: CategoryManage
   const [swipedIndex, setSwipedIndex] = useState<number | null>(null)
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null)
+  const [usageTransactions, setUsageTransactions] = useState<Transaction[]>(transactions)
   const draggingIndexRef = useRef<number | null>(null)
   const rowRefs = useRef<Array<HTMLDivElement | null>>([])
 
@@ -92,6 +94,26 @@ export function CategoryManagePage({ embedded = false, onClose }: CategoryManage
     draggingIndexRef.current = null
   }, [expenseCategoryNames, expenseSubcategoryMap])
 
+  useEffect(() => {
+    let cancelled = false
+    const loadUsageTransactions = async () => {
+      try {
+        const rows = await loadAllTransactions()
+        if (!cancelled) {
+          setUsageTransactions(rows)
+        }
+      } catch {
+        if (!cancelled) {
+          setUsageTransactions(transactions)
+        }
+      }
+    }
+    void loadUsageTransactions()
+    return () => {
+      cancelled = true
+    }
+  }, [loadAllTransactions, transactions])
+
   const updateAt = useCallback((index: number, value: string) => {
     setDraftExpense((prev) => {
       const next = [...prev]
@@ -116,7 +138,7 @@ export function CategoryManagePage({ embedded = false, onClose }: CategoryManage
           return prev
         }
         const name = prev[index]?.trim() ?? ''
-        const usage = name ? countCategoryUsage(name, transactions, recurringTemplates) : 0
+        const usage = name ? countCategoryUsage(name, usageTransactions, recurringTemplates) : 0
         if (usage > 0) {
           const ok = window.confirm(
             `「${name}」在 ${usage} 条账单或周期规则中出现过。删除后仍可查看历史记录，但新记账无法再选此类别。确定删除？`,
@@ -152,7 +174,7 @@ export function CategoryManagePage({ embedded = false, onClose }: CategoryManage
       })
       setSwipedIndex(null)
     },
-    [draftExpense.length, transactions, recurringTemplates],
+    [draftExpense.length, usageTransactions, recurringTemplates],
   )
 
   const addName = useCallback(() => {

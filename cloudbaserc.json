@@ -9,6 +9,14 @@
       "handler": "index.main",
       "memorySize": 256,
       "installDependency": false
+    },
+    {
+      "name": "generateSpendingReportTokenhub",
+      "timeout": 60,
+      "runtime": "Nodejs18.15",
+      "handler": "index.main",
+      "memorySize": 256,
+      "installDependency": false
     }
   ],
   "framework": {

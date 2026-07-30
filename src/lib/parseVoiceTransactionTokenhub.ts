@@ -24,6 +24,10 @@ export type ChatAccountingTurnResult = {
   drafts: ChatAccountingDraft[]
 }
 
+export type CharlieConversationResult = {
+  reply: string
+}
+
 type CfResult =
   | { ok: true; draft?: VoiceTransactionDraft; drafts?: ChatAccountingDraft[]; reply?: string }
   | { ok: false; error: string; raw?: string }
@@ -160,7 +164,7 @@ export async function parseChatAccountingTurnWithTokenhub(input: {
       categories,
       categoryTree,
       currentDrafts: input.currentDrafts,
-      recentMessages: input.recentMessages.slice(-8),
+      recentMessages: input.recentMessages.slice(-10),
       transactionContext: input.transactionContext,
       currentDate: localDateISO(),
       yesterdayDate: localDateISO(-1),
@@ -186,4 +190,52 @@ export async function parseChatAccountingTurnWithTokenhub(input: {
       : '收到，小猪查理已经按你的说法改好啦。',
     drafts: normalizeChatDrafts(r.drafts, categories, categoryTree),
   }
+}
+
+export async function chatWithCharlieTokenhub(input: {
+  text: string
+  categories: string[]
+  subcategoryMap?: Record<string, string[]>
+  currentDrafts: ChatAccountingDraft[]
+  recentMessages: ChatAccountingMessage[]
+  transactionContext?: unknown
+}): Promise<CharlieConversationResult | null> {
+  if (!cloudbaseApp) {
+    return null
+  }
+  const text = input.text.trim()
+  const categories = input.categories.map((item) => item.trim()).filter(Boolean)
+  if (!text || categories.length === 0) {
+    return null
+  }
+
+  const { result } = await cloudbaseApp.callFunction({
+    name: PARSE_VOICE_TRANSACTION_CLOUD_FUNCTION,
+    data: {
+      mode: 'assistant-chat',
+      text,
+      categories,
+      categoryTree: normalizeCategoryTree(categories, input.subcategoryMap),
+      currentDrafts: input.currentDrafts,
+      recentMessages: input.recentMessages.slice(-20),
+      transactionContext: input.transactionContext,
+      currentDate: localDateISO(),
+      yesterdayDate: localDateISO(-1),
+      tomorrowDate: localDateISO(1),
+    },
+  })
+
+  let r = result as CfResult | string
+  if (typeof r === 'string') {
+    try {
+      r = JSON.parse(r) as CfResult
+    } catch {
+      return null
+    }
+  }
+  if (!r || typeof r !== 'object' || !('ok' in r) || !r.ok) {
+    return null
+  }
+  const reply = typeof r.reply === 'string' ? r.reply.trim() : ''
+  return reply ? { reply } : null
 }

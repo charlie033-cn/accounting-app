@@ -1,9 +1,10 @@
-import { useRef, useState, type ChangeEvent } from 'react'
+import { useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { useAccounting } from '../context/AccountingContext'
 import { parseBillImportText, type BillImportDraft } from '../lib/billImport'
 import { classifyTransactionsWithTokenhub } from '../lib/classifyTransactionsTokenhub'
+import { dayDateRange } from '../lib/transactionDateRange'
 
 async function readBillFileText(file: File) {
   const buffer = await file.arrayBuffer()
@@ -29,11 +30,19 @@ export function MePage() {
     formatMoney,
     isLoading,
     setMessage,
+    loadTransactionsByDateRange,
+    changePassword,
   } = useAccounting()
   const importFileRef = useRef<HTMLInputElement>(null)
   const [importDrafts, setImportDrafts] = useState<BillImportDraft[]>([])
   const [importError, setImportError] = useState('')
   const [importLoading, setImportLoading] = useState(false)
+  const [passwordSheetOpen, setPasswordSheetOpen] = useState(false)
+  const [oldPassword, setOldPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [passwordError, setPasswordError] = useState('')
+  const [passwordSaving, setPasswordSaving] = useState(false)
 
   if (!session) {
     return null
@@ -52,9 +61,16 @@ export function MePage() {
     return Object.fromEntries(categories.map((category) => [category, subcategoryOptions(category)]))
   }
 
-  const markDuplicates = (drafts: BillImportDraft[]) => {
+  const markDuplicates = async (drafts: BillImportDraft[]) => {
+    const dates = drafts.map((draft) => draft.transaction_date).sort()
+    const comparisonTransactions = dates.length > 0
+      ? await loadTransactionsByDateRange({
+          startDate: dates[0],
+          endDate: dayDateRange(dates[dates.length - 1]).endDate,
+        })
+      : transactions
     const existingKeys = new Set(
-      transactions.map((item) => `${item.type}|${item.transaction_date}|${Number(item.amount).toFixed(2)}|${item.category}`),
+      comparisonTransactions.map((item) => `${item.type}|${item.transaction_date}|${Number(item.amount).toFixed(2)}|${item.category}`),
     )
     return drafts.map((draft) => {
       const duplicate = existingKeys.has(`${draft.type}|${draft.transaction_date}|${Number(draft.amount).toFixed(2)}|${draft.category}`)
@@ -125,7 +141,7 @@ export function MePage() {
         subcategory: draft.type === 'expense' ? (subcategoryOptions(draft.category)[0] ?? '') : '',
       }))
       const refined = await refineImportCategories(withSubcategories)
-      setImportDrafts(markDuplicates(refined))
+      setImportDrafts(await markDuplicates(refined))
     } catch (err) {
       setImportError(err instanceof Error ? err.message : '账单解析失败')
     } finally {
@@ -152,6 +168,54 @@ export function MePage() {
     )
     setMessage(`已导入 ${selected.length} 笔账单`)
     setImportDrafts([])
+  }
+
+  const resetPasswordForm = () => {
+    setOldPassword('')
+    setNewPassword('')
+    setConfirmPassword('')
+    setPasswordError('')
+  }
+
+  const closePasswordSheet = () => {
+    if (passwordSaving) {
+      return
+    }
+    setPasswordSheetOpen(false)
+    resetPasswordForm()
+  }
+
+  const submitPasswordChange = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setPasswordError('')
+
+    if (!oldPassword) {
+      setPasswordError('请输入当前密码')
+      return
+    }
+    if (newPassword.length < 8 || newPassword.length > 32) {
+      setPasswordError('新密码长度需要为 8～32 位')
+      return
+    }
+    if (newPassword === oldPassword) {
+      setPasswordError('新密码不能与当前密码相同')
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('两次输入的新密码不一致')
+      return
+    }
+
+    setPasswordSaving(true)
+    try {
+      await changePassword(oldPassword, newPassword)
+      setPasswordSheetOpen(false)
+      resetPasswordForm()
+    } catch (err) {
+      setPasswordError(err instanceof Error ? err.message : '密码修改失败，请稍后重试')
+    } finally {
+      setPasswordSaving(false)
+    }
   }
 
   return (
@@ -205,6 +269,13 @@ export function MePage() {
           <Link className="me-panel-btn me-panel-btn--secondary" to="/me/categories">
             分类管理
           </Link>
+          <button
+            type="button"
+            className="me-panel-btn me-panel-btn--secondary"
+            onClick={() => setPasswordSheetOpen(true)}
+          >
+            账号与安全
+          </button>
         </div>
       </section>
 
@@ -299,6 +370,102 @@ export function MePage() {
                 {isLoading ? '导入中…' : `导入 ${selectedImportCount} 笔`}
               </button>
             </div>
+          </section>
+        </div>,
+        document.body,
+      )}
+
+      {passwordSheetOpen && createPortal(
+        <div className="ledger-receipt-sheet-layer" role="presentation">
+          <button
+            type="button"
+            className="ledger-receipt-sheet-backdrop"
+            aria-label="关闭修改密码"
+            onClick={closePasswordSheet}
+            disabled={passwordSaving}
+          />
+          <section
+            className="ledger-receipt-sheet me-password-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="me-password-title"
+          >
+            <div className="ledger-receipt-review-head">
+              <h3 id="me-password-title">修改密码</h3>
+              <button
+                type="button"
+                className="ledger-receipt-sheet-close"
+                aria-label="关闭修改密码"
+                onClick={closePasswordSheet}
+                disabled={passwordSaving}
+              >
+                ×
+              </button>
+            </div>
+
+            <p className="muted me-password-hint">
+              修改成功后，本机记住的旧密码会被清除。
+            </p>
+
+            <form className="form-grid me-password-form" onSubmit={(event) => void submitPasswordChange(event)}>
+              <label>
+                当前密码
+                <input
+                  type="password"
+                  value={oldPassword}
+                  onChange={(event) => setOldPassword(event.target.value)}
+                  autoComplete="current-password"
+                  placeholder="输入当前登录密码"
+                  disabled={passwordSaving}
+                  required
+                />
+              </label>
+              <label>
+                新密码
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(event) => setNewPassword(event.target.value)}
+                  autoComplete="new-password"
+                  minLength={8}
+                  maxLength={32}
+                  placeholder="8～32 位"
+                  disabled={passwordSaving}
+                  required
+                />
+                <span className="me-password-rule">8～32 位，建议使用字母和数字组合</span>
+              </label>
+              <label>
+                确认新密码
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  autoComplete="new-password"
+                  minLength={8}
+                  maxLength={32}
+                  placeholder="再次输入新密码"
+                  disabled={passwordSaving}
+                  required
+                />
+              </label>
+
+              {passwordError && <p className="alert error me-password-error">{passwordError}</p>}
+
+              <div className="ledger-receipt-sheet-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={closePasswordSheet}
+                  disabled={passwordSaving}
+                >
+                  取消
+                </button>
+                <button type="submit" className="primary-button" disabled={passwordSaving}>
+                  {passwordSaving ? '修改中…' : '确认修改'}
+                </button>
+              </div>
+            </form>
           </section>
         </div>,
         document.body,

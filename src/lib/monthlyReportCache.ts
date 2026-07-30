@@ -3,7 +3,7 @@ import type { Transaction } from '../types/transaction'
 import { cloudbaseDb } from './cloudbase'
 import type { GeneratedSpendingReport } from './generateSpendingReportTokenhub'
 
-export const MONTHLY_REPORT_VERSION = '2026-05-charlie-expense-report-v4'
+export const MONTHLY_REPORT_VERSION = '2026-07-selected-month-report-v7'
 
 type MonthlyReportCacheDoc = {
   _id: string

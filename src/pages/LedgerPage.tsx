@@ -8,6 +8,7 @@ import { useAccounting } from '../context/AccountingContext'
 import { parseReceiptFromImageDataUrl, type ReceiptParseDraft } from '../lib/parseReceiptTokenhub'
 import type { Transaction, TransactionFormState } from '../types/transaction'
 import { categoryEmoji } from '../utils/categoryEmoji'
+import { dayDateRange } from '../lib/transactionDateRange'
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -59,9 +60,12 @@ export function LedgerPage() {
     setError,
     setMessage,
     transactions,
+    loadTransactionsByDateRange,
     budgetAmount,
     budgetPeriod,
     budgetLoading,
+    monthExpenseTotal,
+    todayExpenseTotal,
   } = useAccounting()
 
   const receiptFileRef = useRef<HTMLInputElement>(null)
@@ -81,27 +85,11 @@ export function LedgerPage() {
   })
   const [editError, setEditError] = useState('')
   const [swipedTransactionId, setSwipedTransactionId] = useState<string | null>(null)
+  const [todayRows, setTodayRows] = useState<Transaction[]>([])
 
   const cm = currentMonth()
   const day = todayISO()
   const autoTransactionDateRef = useRef(day)
-
-  const stats = useMemo(() => {
-    const monthRows = transactions.filter((item) => item.transaction_date.startsWith(cm))
-    const income = monthRows
-      .filter((item) => item.type === 'income')
-      .reduce((sum, item) => sum + item.amount, 0)
-    const expense = monthRows
-      .filter((item) => item.type === 'expense')
-      .reduce((sum, item) => sum + item.amount, 0)
-    return { income, expense, balance: income - expense }
-  }, [transactions, cm])
-
-  const todayExpenseTotal = useMemo(() => {
-    return transactions
-      .filter((item) => item.type === 'expense' && item.transaction_date === day)
-      .reduce((sum, item) => sum + item.amount, 0)
-  }, [transactions, day])
 
   const ledgerBudgetStrip = useMemo(() => {
     if (budgetPeriod !== cm) {
@@ -110,18 +98,18 @@ export function LedgerPage() {
     if (budgetAmount == null || budgetAmount <= 0) {
       return null
     }
-    const daily = dynamicDailyBudget(cm, budgetAmount, stats.expense)
+    const daily = dynamicDailyBudget(cm, budgetAmount, monthExpenseTotal)
     if (daily == null) {
       return null
     }
     const todayVsDailyPercent =
       daily > 0 ? (todayExpenseTotal / daily) * 100 : todayExpenseTotal > 0 ? 100 : 0
     const monthVsBudgetPercent =
-      budgetAmount > 0 ? (stats.expense / budgetAmount) * 100 : null
+      budgetAmount > 0 ? (monthExpenseTotal / budgetAmount) * 100 : null
     const dayOver = daily <= 0 || todayExpenseTotal > daily
     const dayMeterPercent = dayOver && daily <= 0 ? 100 : Math.min(100, todayVsDailyPercent)
     return {
-      monthRem: budgetAmount - stats.expense,
+      monthRem: budgetAmount - monthExpenseTotal,
       dayRem: daily - todayExpenseTotal,
       cap: budgetAmount,
       daily,
@@ -130,13 +118,27 @@ export function LedgerPage() {
       todayVsDailyPercent,
       monthVsBudgetPercent,
     }
-  }, [budgetPeriod, cm, budgetAmount, stats.expense, todayExpenseTotal])
+  }, [budgetPeriod, cm, budgetAmount, monthExpenseTotal, todayExpenseTotal])
 
-  const todayRows = useMemo(() => {
-    return transactions
-      .filter((item) => item.transaction_date === day)
-      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
-  }, [transactions, day])
+  useEffect(() => {
+    let cancelled = false
+    const loadTodayRows = async () => {
+      try {
+        const rows = await loadTransactionsByDateRange(dayDateRange(day))
+        if (!cancelled) {
+          setTodayRows(rows)
+        }
+      } catch {
+        if (!cancelled) {
+          setTodayRows([])
+        }
+      }
+    }
+    void loadTodayRows()
+    return () => {
+      cancelled = true
+    }
+  }, [day, loadTransactionsByDateRange, transactions])
   const selectedReceiptDraftCount = receiptDrafts.filter((item) => item.selected).length
   const expenseOptions = categoryOptions('expense')
   const formSubcategoryOptions = subcategoryOptions(form.category)
@@ -322,7 +324,7 @@ export function LedgerPage() {
                 {formatMoney(ledgerBudgetStrip.monthRem)}
               </p>
               <p className="muted small ledger-budget-strip-meta">
-                本月支出 {formatMoney(stats.expense)} / 上限 {formatMoney(ledgerBudgetStrip.cap)}
+                本月支出 {formatMoney(monthExpenseTotal)} / 上限 {formatMoney(ledgerBudgetStrip.cap)}
               </p>
             </div>
             {(ledgerBudgetStrip.todayVsDailyPercent != null ||
@@ -377,7 +379,7 @@ export function LedgerPage() {
                             ledgerBudgetStrip.monthVsBudgetPercent > 100 ? 'over' : undefined
                           }
                         >
-                          {formatMoney(stats.expense)} ·{' '}
+                          {formatMoney(monthExpenseTotal)} ·{' '}
                           {ledgerBudgetStrip.monthVsBudgetPercent.toFixed(0)}%
                         </strong>
                       </div>

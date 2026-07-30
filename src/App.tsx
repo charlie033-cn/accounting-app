@@ -22,13 +22,10 @@ function SetupShell() {
   return (
     <main className="app-shell setup-shell">
       <section className="panel setup-panel">
-        <p className="eyebrow">记账 Web App</p>
-        <h1>先连接 CloudBase</h1>
-        <p>
-          在项目根目录创建 <code>.env.local</code>，填写
-          <code>VITE_TCB_ENV_ID</code> 后重启开发服务。
-        </p>
-        <p className="muted">当前腾讯云环境 ID：未配置。</p>
+        <p className="eyebrow">系统设置</p>
+        <h1>服务暂未完成配置</h1>
+        <p>请联系管理员完成应用服务配置后重试。</p>
+        <p className="muted">当前无法连接账号与数据服务。</p>
       </section>
     </main>
   )

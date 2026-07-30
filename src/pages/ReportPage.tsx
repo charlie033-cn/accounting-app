@@ -6,6 +6,7 @@ import { useAccounting } from '../context/AccountingContext'
 import type { CSSProperties } from 'react'
 import type { Transaction } from '../types/transaction'
 import { categoryEmoji } from '../utils/categoryEmoji'
+import { dayDateRange, monthDateRange, yearDateRange } from '../lib/transactionDateRange'
 import { buildSpendingReportSummary } from '../lib/spendingReport'
 import {
   generateSpendingReportWithTokenhub,
@@ -67,18 +68,8 @@ function reportCategoryColor(category: string) {
   return REPORT_CATEGORY_COLORS[category] ?? fallbackReportColor(category)
 }
 
-function dateMatchesPeriod(date: string, timeView: TimeView, day: string, month: string, year: string): boolean {
-  if (timeView === 'day') {
-    return date === day
-  }
-  if (timeView === 'month') {
-    return date.startsWith(month)
-  }
-  return year.length === 4 && date.startsWith(year)
-}
-
 export function ReportPage() {
-  const { transactions, formatMoney } = useAccounting()
+  const { transactions, formatMoney, loadTransactionsByDateRange } = useAccounting()
   const [searchParams] = useSearchParams()
   const [timeView, setTimeView] = useState<TimeView>('month')
   const [filterDay, setFilterDay] = useState(todayISO)
@@ -89,6 +80,9 @@ export function ReportPage() {
   const [generatedReports, setGeneratedReports] = useState<Record<string, GeneratedSpendingReport>>({})
   const [reportFallbackKeys, setReportFallbackKeys] = useState<Record<string, boolean>>({})
   const [reportLoadingKey, setReportLoadingKey] = useState('')
+  const [queriedRows, setQueriedRows] = useState<Transaction[]>([])
+  const [periodLoading, setPeriodLoading] = useState(false)
+  const [periodError, setPeriodError] = useState('')
 
   const periodLabel =
     timeView === 'day'
@@ -100,11 +94,7 @@ export function ReportPage() {
           : '选择年份'
 
   const categoryStats = useMemo<CategoryReportItem[]>(() => {
-    const rows = transactions.filter(
-      (item) =>
-        item.type === 'expense' &&
-        dateMatchesPeriod(item.transaction_date, timeView, filterDay, filterMonth, filterYear),
-    )
+    const rows = queriedRows.filter((item) => item.type === 'expense')
     const total = rows.reduce((sum, item) => sum + item.amount, 0)
     const categoryMap = new Map<string, { amount: number; count: number; rows: Transaction[] }>()
 
@@ -126,15 +116,52 @@ export function ReportPage() {
         color: reportCategoryColor(category),
       }))
       .sort((a, b) => b.amount - a.amount)
-  }, [transactions, timeView, filterDay, filterMonth, filterYear])
+  }, [queriedRows])
 
-  const periodRows = useMemo(
-    () =>
-      transactions.filter((item) =>
-        dateMatchesPeriod(item.transaction_date, timeView, filterDay, filterMonth, filterYear),
-      ),
-    [transactions, timeView, filterDay, filterMonth, filterYear],
-  )
+  const periodRows = queriedRows
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadPeriodRows = async () => {
+      const valid =
+        (timeView === 'day' && /^\d{4}-\d{2}-\d{2}$/.test(filterDay)) ||
+        (timeView === 'month' && /^\d{4}-\d{2}$/.test(filterMonth)) ||
+        (timeView === 'year' && /^\d{4}$/.test(filterYear))
+      if (!valid) {
+        setQueriedRows([])
+        return
+      }
+      setPeriodLoading(true)
+      setPeriodError('')
+      try {
+        const range =
+          timeView === 'day'
+            ? dayDateRange(filterDay)
+            : timeView === 'month'
+              ? monthDateRange(filterMonth)
+              : yearDateRange(filterYear)
+        const rows = await loadTransactionsByDateRange(range)
+        if (!cancelled) {
+          setQueriedRows(rows)
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setQueriedRows([])
+          setPeriodError(error instanceof Error ? error.message : '报表账单加载失败')
+        }
+      } finally {
+        if (!cancelled) {
+          setPeriodLoading(false)
+        }
+      }
+    }
+
+    void loadPeriodRows()
+    return () => {
+      cancelled = true
+    }
+  }, [filterDay, filterMonth, filterYear, loadTransactionsByDateRange, timeView, transactions])
 
   const spendingSummary = useMemo(
     () => buildSpendingReportSummary(periodRows, periodLabel),
@@ -322,6 +349,9 @@ export function ReportPage() {
               </label>
             )}
           </div>
+
+          {periodLoading && <p className="muted">正在加载所选时间范围的完整账单…</p>}
+          {periodError && <p className="alert error">{periodError}</p>}
 
           {(generatedReport || reportFallback || reportLoadingKey === reportKey) && (
             <section className="report-insight-card" aria-label={`${periodLabel} 消费报告`}>

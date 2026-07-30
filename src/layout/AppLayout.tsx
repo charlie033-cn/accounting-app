@@ -55,6 +55,7 @@ export function AppLayout() {
         </NavLink>
         <NavLink
           to="/chat"
+          aria-label="查理 AI 记"
           className={({ isActive }) =>
             `tab-bar-ip-link${isActive ? ' tab-bar-ip-link-active' : ''}${showChatGuide ? ' tab-bar-ip-link--guided' : ''}`
           }
@@ -68,6 +69,7 @@ export function AppLayout() {
           <span className="tab-bar-ip-avatar" aria-hidden>
             <img src="/jizhangip.png" alt="" />
           </span>
+          <span className="tab-bar-ip-label" aria-hidden>查理AI记</span>
         </NavLink>
         <NavLink to="/more" className={tabClass}>
           更多

@@ -1,4 +1,5 @@
 import type { Transaction } from '../types/transaction'
+import { daysInCalendarMonth } from '../accounting/format'
 
 export type SpendingReportCategory = {
   category: string
@@ -39,6 +40,13 @@ function money(amount: number) {
 function uniqueDayCount(rows: Transaction[]) {
   const days = new Set(rows.map((row) => row.transaction_date))
   return Math.max(1, days.size)
+}
+
+function reportDayCount(rows: Transaction[], periodLabel: string) {
+  if (/^\d{4}-\d{2}$/.test(periodLabel)) {
+    return daysInCalendarMonth(periodLabel)
+  }
+  return uniqueDayCount(rows)
 }
 
 function isCategory(row: Transaction, keywords: string[]) {
@@ -85,7 +93,7 @@ export function buildSpendingReportSummary(
   const topExpenseDay = topExpenseDayEntry
     ? { date: topExpenseDayEntry[0], amount: topExpenseDayEntry[1] }
     : null
-  const averageDailyExpense = totalExpense / uniqueDayCount(expenses)
+  const averageDailyExpense = totalExpense / reportDayCount(expenses, periodLabel)
   const foodExpense = expenses
     .filter((row) => isCategory(row, ['餐', '饭', '外卖', '咖啡', '奶茶', '甜品', '水果', '零食']))
     .reduce((sum, row) => sum + row.amount, 0)
